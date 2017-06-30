@@ -1,0 +1,15 @@
+.project
+.classpath
+.settings
+/.settings
+*.releaseBackup
+release.properties
+.idea
+/.idea
+*.iml
+*.class
+data/
+bin/
+target
+datasets/
+output/
