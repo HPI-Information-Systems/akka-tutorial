@@ -1,4 +1,4 @@
-package de.hpi.akka_tutorial.actors;
+package de.hpi.akka_tutorial.prime.actors;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -12,8 +12,8 @@ import akka.routing.ActorRefRoutee;
 import akka.routing.RoundRobinRoutingLogic;
 import akka.routing.Routee;
 import akka.routing.Router;
-import de.hpi.akka_tutorial.messages.RangeMessage;
-import de.hpi.akka_tutorial.messages.NumbersMessage;
+import de.hpi.akka_tutorial.prime.messages.NumbersMessage;
+import de.hpi.akka_tutorial.prime.messages.RangeMessage;
 
 public class PrimeMaster extends AbstractActor {
 	
@@ -32,6 +32,7 @@ public class PrimeMaster extends AbstractActor {
 	private NumbersMessage primeNumbers = new NumbersMessage();
 
 	public PrimeMaster(final int numberOfWorkers, ActorRef primeListener) {
+		
 		// Save our parameters locally
 		this.numberOfWorkers = numberOfWorkers;
 		this.primeListener = primeListener;
@@ -55,9 +56,7 @@ public class PrimeMaster extends AbstractActor {
 				.build();
 	}
 
-	private void handle(RangeMessage message) {
-		// We have a new set of work to perform
-		RangeMessage numberRangeMessage = (RangeMessage) message;
+	private void handle(RangeMessage numberRangeMessage) {
 		
 		// Break the work up into 10 chunks of numbers
 		final long numberOfNumbers = numberRangeMessage.getEndNumber() - numberRangeMessage.getStartNumber();
@@ -78,9 +77,9 @@ public class PrimeMaster extends AbstractActor {
 	}
 
 	private void handle(NumbersMessage message) {
+		
 		// Add the received prime numbers from the worker to the final result
-		NumbersMessage result = (NumbersMessage) message;
-		this.primeNumbers.addNumbers(result.getNumbers());
+		this.primeNumbers.addNumbers(message.getNumbers());
 		
 		if (++this.numberOfResults >= 10) {
 			// Notify the primeListener

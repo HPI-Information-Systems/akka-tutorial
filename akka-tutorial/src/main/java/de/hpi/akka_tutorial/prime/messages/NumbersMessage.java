@@ -1,4 +1,4 @@
-package de.hpi.akka_tutorial.messages;
+package de.hpi.akka_tutorial.prime.messages;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -10,9 +10,6 @@ public class NumbersMessage implements Serializable {
 	private static final long serialVersionUID = 1538940836039448197L;
 	
 	private final List<Long> numbers = new ArrayList<Long>();
-
-	public NumbersMessage() {
-	}
 
 	public List<Long> getNumbers() {
 		return this.numbers;
@@ -28,6 +25,7 @@ public class NumbersMessage implements Serializable {
 	
 	@Override
 	public String toString() {
+		
 		Collections.sort(this.numbers);
 		
 		StringBuilder builder = new StringBuilder("Numbers[");

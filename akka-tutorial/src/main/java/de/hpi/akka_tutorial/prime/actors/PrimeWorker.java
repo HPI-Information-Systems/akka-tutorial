@@ -1,11 +1,11 @@
-package de.hpi.akka_tutorial.actors;
+package de.hpi.akka_tutorial.prime.actors;
 
 import akka.actor.AbstractActor;
 import akka.actor.Props;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
-import de.hpi.akka_tutorial.messages.RangeMessage;
-import de.hpi.akka_tutorial.messages.NumbersMessage;
+import de.hpi.akka_tutorial.prime.messages.NumbersMessage;
+import de.hpi.akka_tutorial.prime.messages.RangeMessage;
 
 public class PrimeWorker extends AbstractActor {
 	
@@ -23,12 +23,10 @@ public class PrimeWorker extends AbstractActor {
 				.build();
 	}
 
-	private void handle(RangeMessage message) {
-		// Cast the message to a RangeMessage
-		RangeMessage numberRangeMessage = (RangeMessage) message;
-		System.out.println("Processing " + numberRangeMessage.getStartNumber() + " to " + numberRangeMessage.getEndNumber());
-
+	private void handle(RangeMessage numberRangeMessage) {
+		
 		// Iterate over the range of numbers, compute the primes, and return the list of numbers that are prime
+		this.logger.info("Processing " + numberRangeMessage.getStartNumber() + " to " + numberRangeMessage.getEndNumber());
 		NumbersMessage result = new NumbersMessage();
 		for (long number = numberRangeMessage.getStartNumber(); number <= numberRangeMessage.getEndNumber(); number++)
 			if (this.isPrime(number))
@@ -39,6 +37,7 @@ public class PrimeWorker extends AbstractActor {
 	}
 
 	private boolean isPrime(long n) {
+		
 		// Check for the most basic primes
 		if (n == 1 || n == 2 || n == 3)
 			return true;

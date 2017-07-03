@@ -1,4 +1,4 @@
-package de.hpi.akka_tutorial.messages;
+package de.hpi.akka_tutorial.prime.messages;
 
 import java.io.Serializable;
 
@@ -10,6 +10,7 @@ public class RangeMessage implements Serializable {
 	private final long endNumber;
 
 	public RangeMessage(final long startNumber, final long endNumber) {
+		
 		this.startNumber = startNumber;
 		this.endNumber = endNumber;
 	}

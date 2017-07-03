@@ -1,21 +1,21 @@
-package de.hpi.akka_tutorial;
+package de.hpi.akka_tutorial.prime;
 
 //import java.util.concurrent.TimeUnit;
 //import java.util.concurrent.TimeoutException;
 
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
-//import akka.actor.Terminated;
-import de.hpi.akka_tutorial.actors.PrimeListener;
-import de.hpi.akka_tutorial.actors.PrimeMaster;
-import de.hpi.akka_tutorial.messages.RangeMessage;
 //import scala.concurrent.Await;
 //import scala.concurrent.Future;
 //import scala.concurrent.duration.Duration;
+import de.hpi.akka_tutorial.prime.actors.PrimeListener;
+import de.hpi.akka_tutorial.prime.actors.PrimeMaster;
+import de.hpi.akka_tutorial.prime.messages.RangeMessage;
 
 public class PrimeCalculator {
 	
 	public void calculate(long startNumber, long endNumber) {
+		
 		// Create the ActorSystem
 		ActorSystem actorSystem = ActorSystem.create("primeCalculator");
 

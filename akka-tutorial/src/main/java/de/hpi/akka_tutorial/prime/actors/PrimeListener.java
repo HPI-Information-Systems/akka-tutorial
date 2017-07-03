@@ -1,10 +1,10 @@
-package de.hpi.akka_tutorial.actors;
+package de.hpi.akka_tutorial.prime.actors;
 
 import akka.actor.AbstractActor;
 import akka.actor.Props;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
-import de.hpi.akka_tutorial.messages.NumbersMessage;
+import de.hpi.akka_tutorial.prime.messages.NumbersMessage;
 
 public class PrimeListener extends AbstractActor {
 	
@@ -23,7 +23,8 @@ public class PrimeListener extends AbstractActor {
 	}
 	
 	private void handle(NumbersMessage message) {
-		System.out.println(((NumbersMessage)message).toString());
+		
+		this.logger.info(message.toString());
 		
 		this.getContext().system().terminate();
 	}
