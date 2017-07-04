@@ -6,9 +6,6 @@ import java.util.List;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.Props;
-import akka.remote.AssociationErrorEvent;
-import akka.remote.AssociationEvent;
-import akka.remote.DisassociatedEvent;
 
 public class Worker extends AbstractLoggingActor {
 	
@@ -49,9 +46,31 @@ public class Worker extends AbstractLoggingActor {
 		this.log().info("Processing " + message.getNumbers().get(0) + " to " + message.getNumbers().get(message.getNumbers().size() - 1));
 
 		// Do something interesting //
-		List<Object> result = new ArrayList<Object>(message.getNumbers());
+		
+		// Iterate over the range of numbers, compute the primes, and return the list of numbers that are prime
+		final List<Object> result = new ArrayList<>();
+		for (Long number : message.getNumbers())
+			if (this.isPrime(number.longValue()))
+				result.add(number);
 		
 		this.getSender().tell(new Master.ObjectMessage(result), getSelf());
 	}
 
+	private boolean isPrime(long n) {
+		
+		// Check for the most basic primes
+		if (n == 1 || n == 2 || n == 3)
+			return true;
+
+		// Check if n is an even number
+		if (n % 2 == 0)
+			return false;
+
+		// Check the odds
+		for (long i = 3; i * i <= n; i += 2)
+			if (n % i == 0)
+				return false;
+		
+		return true;
+	}
 }

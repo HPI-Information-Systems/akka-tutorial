@@ -26,7 +26,7 @@ public class Calculator {
 	
 	private final String slaveSystemName = "SlaveActorSystem";
 	private final String slaveIP = "172.17.24.120";
-	private final String slavePort = "2555";
+	private final String slavePort = "2553";
 	
 	private final String shepherdName = "shepherd";
 	private final String masterName = "master";
@@ -53,10 +53,14 @@ public class Calculator {
 
 		// Create the ActorSystem
 		final Config config = ConfigFactory.parseString("akka.actor.provider = remote")
-		        .withFallback(ConfigFactory.parseString("akka.remote.enabled-transports = [\"akka.remote.netty.tcp\"]"))
-		        .withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.hostname = " + this.masterIP))
-		        .withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.port = " + this.masterPort))
-		        .withFallback(ConfigFactory.load("common"));
+			//	.withFallback(ConfigFactory.parseString("akka.actor.serializers.proto = \"akka.remote.serialization.ProtobufSerializer\""))
+			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"java.io.Serializable\" = none"))
+			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"de.hpi.akka_tutorial.remote.actors.Worker.NumbersMessage\" = proto"))
+			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"de.hpi.akka_tutorial.remote.actors.Master.ObjectMessage\" = proto"))
+				.withFallback(ConfigFactory.parseString("akka.remote.enabled-transports = [\"akka.remote.netty.tcp\"]"))
+				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.hostname = " + this.masterIP))
+				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.port = " + this.masterPort))
+				.withFallback(ConfigFactory.load("common"));
 		final ActorSystem actorSystem = ActorSystem.create(this.masterSystemName, config);
 
 		// Create the Shepherd
@@ -96,10 +100,14 @@ public class Calculator {
 
 		// Create the local ActorSystem
 		final Config config = ConfigFactory.parseString("akka.actor.provider = remote")
-		        .withFallback(ConfigFactory.parseString("akka.remote.enabled-transports = [\"akka.remote.netty.tcp\"]"))
-		        .withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.hostname = " + this.slaveIP))
-		        .withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.port = " + this.slavePort))
-		        .withFallback(ConfigFactory.load("common"));
+			//	.withFallback(ConfigFactory.parseString("akka.actor.serializers.proto = \"akka.remote.serialization.ProtobufSerializer\""))
+			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"java.io.Serializable\" = none"))
+			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"de.hpi.akka_tutorial.remote.actors.Worker.NumbersMessage\" = proto"))
+			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"de.hpi.akka_tutorial.remote.actors.Master.ObjectMessage\" = proto"))
+				.withFallback(ConfigFactory.parseString("akka.remote.enabled-transports = [\"akka.remote.netty.tcp\"]"))
+				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.hostname = " + this.slaveIP))
+				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.port = " + this.slavePort))
+				.withFallback(ConfigFactory.load("common"));
 		final ActorSystem actorSystem = ActorSystem.create(this.slaveSystemName, config);
 
 		// Find the shepherd actor in the remote ActorSystem
