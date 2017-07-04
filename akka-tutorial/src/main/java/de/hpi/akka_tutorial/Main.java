@@ -1,13 +1,13 @@
 package de.hpi.akka_tutorial;
 
 import de.hpi.akka_tutorial.prime.PrimeCalculator;
-import de.hpi.akka_tutorial.remote.RemoteCalculator;
+import de.hpi.akka_tutorial.remote.Calculator;
 
 public class Main {
 	
 	public static void main(String[] args) {
 		
-		startPrimeExample();
+	//	startPrimeExample();
 		
 		startRemoteExample();
 	}
@@ -26,7 +26,7 @@ public class Main {
 		long startNumber = 0;
 		long endNumber = 100;
 
-		RemoteCalculator remoteCalculator = new RemoteCalculator();
-		remoteCalculator.calculate(startNumber, endNumber);
+		Calculator calculator = new Calculator();
+		calculator.calculate(startNumber, endNumber);
 	}
 }

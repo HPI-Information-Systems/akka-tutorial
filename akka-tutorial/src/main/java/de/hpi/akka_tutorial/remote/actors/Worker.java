@@ -6,6 +6,9 @@ import java.util.List;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.Props;
+import akka.remote.AssociationErrorEvent;
+import akka.remote.AssociationEvent;
+import akka.remote.DisassociatedEvent;
 
 public class Worker extends AbstractLoggingActor {
 	
@@ -26,6 +29,11 @@ public class Worker extends AbstractLoggingActor {
 		public NumbersMessage(final List<Long> numbers) {
 			this.numbers = numbers;
 		}
+	}
+	
+	@Override
+	public void postStop() throws Exception {
+		this.context().system().terminate();
 	}
 	
 	@Override

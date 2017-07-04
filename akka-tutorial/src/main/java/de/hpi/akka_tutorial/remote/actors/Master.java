@@ -3,20 +3,37 @@ package de.hpi.akka_tutorial.remote.actors;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
+import akka.actor.Address;
+import akka.actor.AddressFromURIString;
+import akka.actor.Deploy;
+import akka.actor.OneForOneStrategy;
 import akka.actor.Props;
+import akka.actor.SupervisorStrategy;
+import akka.japi.pf.DeciderBuilder;
+import akka.remote.RemoteScope;
 import akka.routing.ActorRefRoutee;
 import akka.routing.RoundRobinRoutingLogic;
 import akka.routing.Routee;
 import akka.routing.Router;
+import de.hpi.akka_tutorial.remote.actors.Shepherd.Subscription;
+import scala.concurrent.duration.Duration;
+import static akka.actor.SupervisorStrategy.*;
 
 public class Master extends AbstractLoggingActor {
 	
-	public static Props props(final int numberOfWorkers, ActorRef listener) {
-		return Props.create(Master.class, () -> new Master(numberOfWorkers, listener));
+	public static Props props(final List<Subscription> subscriptions, ActorRef listener) {
+		return Props.create(Master.class, () -> new Master(subscriptions, listener));
 	}
+	
+	private static SupervisorStrategy strategy =
+			new OneForOneStrategy(0, Duration.create(1, TimeUnit.SECONDS), DeciderBuilder
+					.match(Exception.class, e -> escalate())
+					.matchAny(o -> escalate())
+					.build());
 
 	public static class RangeMessage implements Serializable {
 		
@@ -53,7 +70,6 @@ public class Master extends AbstractLoggingActor {
 		public ObjectMessage(List<Object> objects) {
 			this.objects = objects;
 		}
-
 	}
 	
 	private final Router workerRouter;
@@ -64,22 +80,32 @@ public class Master extends AbstractLoggingActor {
 
 	private final List<String> strings = new ArrayList<String>();
 
-	public Master(final int numberOfWorkers, ActorRef listener) {
+	public Master(final List<Subscription> subscriptions, ActorRef listener) {
 		
 		// Save our parameters locally
-		this.numberOfWorkers = numberOfWorkers;
+		this.numberOfWorkers = subscriptions.size();
 		this.listener = listener;
 		
 		// Create routees and router
 		List<Routee> routees = new ArrayList<Routee>();
-		for (int i = 0; i < numberOfWorkers; i++) {
-			ActorRef workerRef = this.getContext().actorOf(Worker.props());
-			this.getContext().watch(workerRef);
-			routees.add(new ActorRefRoutee(workerRef));
+		for (Subscription subscription : subscriptions) {
+			
+			Address address = AddressFromURIString.parse(subscription.toString());
+			
+			ActorRef worker = this.getContext().actorOf(Worker.props().withDeploy(new Deploy(new RemoteScope(address))));
+			
+			this.getContext().watch(worker);
+			
+			routees.add(new ActorRefRoutee(worker));
 		}
 		this.workerRouter = new Router(new RoundRobinRoutingLogic(), routees);
 	}
 
+	@Override
+	public SupervisorStrategy supervisorStrategy() {
+		return Master.strategy;
+	}
+	
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
@@ -120,7 +146,7 @@ public class Master extends AbstractLoggingActor {
 		for (Object object : message.getObjects())
 			this.strings.add(object.toString());
 		
-		if (++this.numberOfResults >= 10) {
+		if (++this.numberOfResults >= this.numberOfWorkers) {
 			// Notify the listener
 			this.listener.tell(new Listener.StringsMessage(this.strings), getSelf());
 
