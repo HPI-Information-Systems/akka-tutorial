@@ -60,8 +60,20 @@ public class Worker extends AbstractLoggingActor {
 		for (Long number : message.getNumbers())
 			if (this.isPrime(number.longValue()))
 				result.add(number);
-		
+
 		this.getSender().tell(new Master.ObjectMessage(message.getId(), result), this.getSelf());
+
+		// Asynchronous version: Consider using a dedicated executor service.
+//		ActorRef sender = this.getSender();
+//		ActorRef self = this.getSelf();
+//		getContext().getSystem().dispatcher().execute(() -> {
+//			final List<Object> result = new ArrayList<>();
+//			for (Long number : message.getNumbers())
+//				if (this.isPrime(number.longValue()))
+//					result.add(number);
+//
+//			sender.tell(new Master.ObjectMessage(message.getId(), result), self);
+//		});
 	}
 
 	private boolean isPrime(long n) {
