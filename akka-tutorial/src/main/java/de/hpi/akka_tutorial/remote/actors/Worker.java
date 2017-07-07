@@ -13,6 +13,8 @@ public class Worker extends AbstractLoggingActor {
 		return Props.create(Worker.class);
 	}
 
+	private static final int MAX_PRIMES_PER_MESSAGE = 1000;
+
 	/**
 	 * Requests a worker to discover all primes in a given range.
 	 */
@@ -59,13 +61,22 @@ public class Worker extends AbstractLoggingActor {
 		this.log().info("Discovering primes p ({} <= p <= {})...", message.rangeMin, message.rangeMax);
 
 		// Iterate over the range of numbers, compute the primes, and return the list of numbers that are prime
-		final List<Long> result = new ArrayList<>();
+		List<Long> primeBuffer = new ArrayList<>(MAX_PRIMES_PER_MESSAGE);
 		for (long i = message.rangeMin; i < message.rangeMax; i++) {
-			if (isPrime(i)) result.add(i);
+			if (isPrime(i)) {
+				// We must not send too large messages, hence, also reply with intermediate results as necessary.
+				if (primeBuffer.size() >= MAX_PRIMES_PER_MESSAGE) {
+					// Attention: Never send mutable objects in a message!!!11 Here, we create a copy of our mutable buffer.
+					ArrayList<Long> primeBufferCopy = new ArrayList<>(primeBuffer);
+					this.getSender().tell(new Master.Primes(message.id, primeBufferCopy, false), this.getSelf());
+					primeBuffer.clear();
+				}
+				primeBuffer.add(i);
+			}
 		}
 
 		// Send the primes back.
-		this.getSender().tell(new Master.Primes(message.id, result), this.getSelf());
+		this.getSender().tell(new Master.Primes(message.id, primeBuffer, true), this.getSelf());
 
 		// Asynchronous version: Consider using a dedicated executor service.
 //		ActorRef sender = this.getSender();

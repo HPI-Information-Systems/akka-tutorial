@@ -63,6 +63,9 @@ public class Master extends AbstractLoggingActor {
 	public static class NoMoreRangesMessage implements Serializable {
 	}
 
+	/**
+	 * This message is the answer on a {@link Worker.PrimeDiscoveryTask subquery}.
+	 */
 	public static class Primes implements Serializable {
 
 		private static final long serialVersionUID = 4862570515887001983L;
@@ -71,9 +74,19 @@ public class Master extends AbstractLoggingActor {
 
 		private final List<Long> primes;
 
-		public Primes(final int requestId, final List<Long> primes) {
+		private final boolean isComplete;
+
+		/**
+		 * Create a new instance.
+		 *
+		 * @param requestId  the ID of the query that is being served
+		 * @param primes     some discovered primes
+		 * @param isComplete whether all primes of the current subquery have been discovered
+		 */
+		public Primes(final int requestId, final List<Long> primes, boolean isComplete) {
 			this.requestId = requestId;
 			this.primes = primes;
+			this.isComplete = isComplete;
 		}
 	}
 
@@ -99,7 +112,7 @@ public class Master extends AbstractLoggingActor {
 		/**
 		 * Give each worker at most this many numbers at once to check.
 		 */
-		private final int MAX_SUBQUERY_RANGE_SIZE = 100000;
+		private final int MAX_SUBQUERY_RANGE_SIZE = 100_000;
 
 		/**
 		 * The query that is being processed.
@@ -181,10 +194,12 @@ public class Master extends AbstractLoggingActor {
 		 * @param worker that produced the result
 		 * @param primes the resulting primes
 		 */
-		void collectResult(ActorRef worker, Collection<Long> primes) {
-			// Mark the query as completed.
-			Worker.PrimeDiscoveryTask finishedTask = this.runningSubqueries.remove(worker);
-			assert finishedTask != null;
+		void collectResult(ActorRef worker, Collection<Long> primes, boolean isComplete) {
+			if (isComplete) {
+				// Mark the query as completed.
+				Worker.PrimeDiscoveryTask finishedTask = this.runningSubqueries.remove(worker);
+				assert finishedTask != null;
+			}
 
 			// Collect the results.
 			this.primes.addAll(primes);
@@ -362,7 +377,13 @@ public class Master extends AbstractLoggingActor {
 
 		// Find the query being processed.
 		QueryTracker queryTracker = this.queryId2tracker.get(message.requestId);
-		queryTracker.collectResult(worker, message.primes);
+		queryTracker.collectResult(worker, message.primes, message.isComplete);
+
+		// Log a short status update.
+		log().info(String.format("Got %,d primes between %,d and %,d.", queryTracker.primes.size(), queryTracker.rangeMessage.startNumber, queryTracker.rangeMessage.endNumber));
+
+		// If the worker only returned an intermediate result, no further action is required.
+		if (!message.isComplete) return;
 
 		// Mark the worker as free.
 		this.worker2tracker.put(worker, null);
