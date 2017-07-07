@@ -9,6 +9,9 @@ import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.actor.Terminated;
 
+/**
+ * The shepherd lives in the master actor system and waits for slave subscriptions.
+ */
 public class Shepherd extends AbstractLoggingActor {
 
 	public static Props props(final ActorRef master) {

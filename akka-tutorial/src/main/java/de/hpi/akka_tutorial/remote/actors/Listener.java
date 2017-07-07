@@ -26,7 +26,7 @@ public class Listener extends AbstractLoggingActor {
 			this.strings = strings;
 		}
 	}
-	
+
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()

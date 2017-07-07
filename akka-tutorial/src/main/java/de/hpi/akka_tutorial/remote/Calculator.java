@@ -1,23 +1,16 @@
 package de.hpi.akka_tutorial.remote;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Scanner;
-import java.util.concurrent.TimeoutException;
-
-import com.typesafe.config.Config;
-import com.typesafe.config.ConfigFactory;
-
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.actor.PoisonPill;
-import de.hpi.akka_tutorial.remote.actors.Listener;
-import de.hpi.akka_tutorial.remote.actors.Master;
-import de.hpi.akka_tutorial.remote.actors.Shepherd;
-import de.hpi.akka_tutorial.remote.actors.Shepherd.Subscription;
-import de.hpi.akka_tutorial.remote.actors.Slave;
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigFactory;
+import de.hpi.akka_tutorial.remote.actors.*;
 import scala.concurrent.Await;
 import scala.concurrent.duration.Duration;
+
+import java.util.Scanner;
+import java.util.concurrent.TimeoutException;
 
 public class Calculator {
 
@@ -41,49 +34,50 @@ public class Calculator {
 				.withFallback(ConfigFactory.load("common"));
 		final ActorSystem actorSystem = ActorSystem.create(masterSystemName, config);
 
+		// Create the reaper.
+		final ActorRef reaper = actorSystem.actorOf(Reaper.props(), "reaper");
+
 		// Create the Listener
 		final ActorRef listener = actorSystem.actorOf(Listener.props(), listenerName);
+		reaper.tell(new Reaper.WatchMeMessage(), listener);
 
 		// Create the Master
 		final ActorRef master = actorSystem.actorOf(Master.props(listener), masterName);
+		reaper.tell(new Reaper.WatchMeMessage(), master);
 
 		// Create the Shepherd
 		final ActorRef shepherd = actorSystem.actorOf(Shepherd.props(master), shepherdName);
-		
+
 		// Read ranges from the console and process them
 		final Scanner scanner = new Scanner(System.in);
 		while (true) {
-			
+
 			// Read input
+			System.out.printf("Enter a range to analyze for primes (\"min,max\"): ");
 			String line = scanner.nextLine();
-			
+
 			// Check for correct range message
 			String[] lineSplit = line.split(",");
 			if (lineSplit.length != 2)
 				break;
-			
+
 			// Extract start- and endNumber
 			long startNumber = Long.valueOf(lineSplit[0]);
 			long endNumber = Long.valueOf(lineSplit[1]);
-			
+
 			// Start the calculation
 			master.tell(new Master.RangeMessage(startNumber, endNumber), ActorRef.noSender());
 		}
 		scanner.close();
-		
-		// Shutdown the ActorSystem
-		
-		shepherd.tell(PoisonPill.getInstance(), ActorRef.noSender()); // stop via message (asynchronously; all current messages in the queue are processed first but no new)
-	//	actorSystem.stop(shepherd); // stop via call (only the current message is processed but no further messages from the queue)
+		System.out.println("Stopping...");
 
-		// TODO
-//		master.tell(Shutdown.class, sender); // Finish worker, stop worker, poisenpill listener
-		
-		// now the reaper will terminate the actorsystem
-		
-		actorSystem.terminate(); // TODO: Careful shutdown
-		
-		// Await termination
+		// At this point, we do not accept any new subscriptions.
+		shepherd.tell(PoisonPill.getInstance(), ActorRef.noSender()); // stop via message (asynchronously; all current messages in the queue are processed first but no new)
+
+		// Furthermore, we tell the master that we will not send any further requests.
+		master.tell(new Master.NoMoreRangesMessage(), ActorRef.noSender());
+
+		// Await termination: The termination should be issued by the reaper.
 		try {
 			Await.ready(actorSystem.whenTerminated(), Duration.Inf());
 		} catch (TimeoutException | InterruptedException e) {
@@ -109,7 +103,7 @@ public class Calculator {
 
 		// Create a Slave
 		final ActorRef slave = actorSystem.actorOf(Slave.props(), slaveName);
-		
+
 		// Tell the Slave to register the local ActorSystem
 		slave.tell(new Slave.Connect(masterSystemName, masterHost, masterPort, shepherdName, slaveSystemName, host, port), ActorRef.noSender());
 	}
