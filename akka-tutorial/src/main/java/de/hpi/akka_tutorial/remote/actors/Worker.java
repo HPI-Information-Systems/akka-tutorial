@@ -17,20 +17,21 @@ public class Worker extends AbstractLoggingActor {
 		
 		private static final long serialVersionUID = -7467053227355130231L;
 		
+		private final Integer id;
 		private final List<Long> numbers;
+
+		public Integer getId() {
+			return this.id;
+		}
 
 		public List<Long> getNumbers() {
 			return this.numbers;
 		}
 
-		public NumbersMessage(final List<Long> numbers) {
+		public NumbersMessage(final Integer id, final List<Long> numbers) {
+			this.id = id;
 			this.numbers = numbers;
 		}
-	}
-	
-	@Override
-	public void postStop() throws Exception {
-		this.context().system().terminate();
 	}
 	
 	@Override
@@ -53,7 +54,7 @@ public class Worker extends AbstractLoggingActor {
 			if (this.isPrime(number.longValue()))
 				result.add(number);
 		
-		this.getSender().tell(new Master.ObjectMessage(result), getSelf());
+		this.getSender().tell(new Master.ObjectMessage(message.getId(), result), this.getSelf());
 	}
 
 	private boolean isPrime(long n) {

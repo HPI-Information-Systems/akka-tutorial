@@ -38,8 +38,6 @@ public class Listener extends AbstractLoggingActor {
 	private void handle(StringsMessage stringsMessage) {
 		
 		this.log().info(this.asString(stringsMessage.getStrings()));
-		
-		this.getContext().system().terminate();
 	}
 	
 	private String asString(List<String> strings) {

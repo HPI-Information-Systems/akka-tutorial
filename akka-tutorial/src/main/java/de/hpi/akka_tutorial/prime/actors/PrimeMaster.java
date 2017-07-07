@@ -17,7 +17,7 @@ import de.hpi.akka_tutorial.prime.messages.RangeMessage;
 
 public class PrimeMaster extends AbstractActor {
 	
-	public static Props props(final int numberOfWorkers, ActorRef listener) {
+	public static Props props(final int numberOfWorkers, final ActorRef listener) {
 		return Props.create(PrimeMaster.class, () -> new PrimeMaster(numberOfWorkers, listener));
 	}
 
@@ -31,7 +31,7 @@ public class PrimeMaster extends AbstractActor {
 
 	private NumbersMessage primeNumbers = new NumbersMessage();
 
-	public PrimeMaster(final int numberOfWorkers, ActorRef primeListener) {
+	public PrimeMaster(final int numberOfWorkers, final ActorRef primeListener) {
 		
 		// Save our parameters locally
 		this.numberOfWorkers = numberOfWorkers;
