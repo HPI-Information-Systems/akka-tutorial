@@ -55,6 +55,13 @@ public class Slave extends AbstractLoggingActor {
 		this.getContext().getSystem().eventStream().subscribe(getSelf(), DisassociatedEvent.class);
 	}
 
+
+	@Override
+	public void postStop() throws Exception {
+		super.postStop();
+		log().info("Stopping {}...", self());
+	}
+
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
@@ -85,12 +92,12 @@ public class Slave extends AbstractLoggingActor {
 		ActorSelection selection = this.getContext().system().actorSelection(String.format("%s/user/%s", message.address, Shepherd.DEFAULT_NAME));
 
 		// Register the local ActorSystem by sending a subscription message
-		Scheduler scheduler = getContext().getSystem().scheduler();
-		ExecutionContextExecutor dispatcher = getContext().getSystem().dispatcher();
+		final Scheduler scheduler = getContext().getSystem().scheduler();
+		final ExecutionContextExecutor dispatcher = getContext().getSystem().dispatcher();
 		this.connectSchedule = scheduler.schedule(
 				Duration.Zero(),
 				Duration.create(5, TimeUnit.SECONDS),
-				() -> selection.tell(new Shepherd.SubscriptionMessage(message.address), this.getSelf()),
+				() -> selection.tell(new Shepherd.SubscriptionMessage(), this.getSelf()),
 				dispatcher
 		);
 	}

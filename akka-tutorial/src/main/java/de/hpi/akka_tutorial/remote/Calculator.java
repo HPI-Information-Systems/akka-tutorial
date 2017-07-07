@@ -18,7 +18,7 @@ public class Calculator {
 	private static final String masterSystemName = "MasterActorSystem";
 	private static final String slaveSystemName = "SlaveActorSystem";
 
-	public static void runMaster(String host, int port) {
+	public static void runMaster(String host, int port, int numLocalWorkers) {
 		// Create the ActorSystem
 		final Config config = ConfigFactory.parseString("akka.actor.provider = remote")
 			//	.withFallback(ConfigFactory.parseString("akka.actor.serializers.proto = \"akka.remote.serialization.ProtobufSerializer\""))
@@ -38,7 +38,7 @@ public class Calculator {
 		final ActorRef listener = actorSystem.actorOf(Listener.props(), Listener.DEFAULT_NAME);
 
 		// Create the Master
-		final ActorRef master = actorSystem.actorOf(Master.props(listener), Master.DEFAULT_NAME);
+		final ActorRef master = actorSystem.actorOf(Master.props(listener, numLocalWorkers), Master.DEFAULT_NAME);
 
 		// Create the Shepherd
 		final ActorRef shepherd = actorSystem.actorOf(Shepherd.props(master), Shepherd.DEFAULT_NAME);

@@ -5,7 +5,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import akka.actor.AbstractLoggingActor;
-import akka.actor.ActorPath;
 import akka.actor.Props;
 
 public class Worker extends AbstractLoggingActor {
@@ -13,25 +12,25 @@ public class Worker extends AbstractLoggingActor {
 	public static Props props() {
 		return Props.create(Worker.class);
 	}
-	
-	public static class NumbersMessage implements Serializable {
+
+	/**
+	 * Requests a worker to discover all primes in a given range.
+	 */
+	public static class PrimeDiscoveryTask implements Serializable {
 		
 		private static final long serialVersionUID = -7467053227355130231L;
 		
-		private final Integer id;
-		private final List<Long> numbers;
+		private final int id;
 
-		public Integer getId() {
-			return this.id;
-		}
+		/**
+		 * The lower (inclusive) and upper (exclusive) range bounds to discover primes in.
+		 */
+		private final long rangeMin, rangeMax;
 
-		public List<Long> getNumbers() {
-			return this.numbers;
-		}
-
-		public NumbersMessage(final Integer id, final List<Long> numbers) {
+		public PrimeDiscoveryTask(int id, long rangeMin, long rangeMax) {
 			this.id = id;
-			this.numbers = numbers;
+			this.rangeMin = rangeMin;
+			this.rangeMax = rangeMax;
 		}
 	}
 
@@ -42,26 +41,31 @@ public class Worker extends AbstractLoggingActor {
 	}
 
 	@Override
+	public void postStop() throws Exception {
+		super.postStop();
+		log().info("Stopping {}...", self());
+	}
+
+	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
-				.match(NumbersMessage.class, this::handle)
+				.match(PrimeDiscoveryTask.class, this::handle)
 				.matchAny(object -> this.log().info(this.getClass().getName() + " received unknown message: " + object.toString()))
 				.build();
 	}
 
-	private void handle(NumbersMessage message) {
+	private void handle(PrimeDiscoveryTask message) {
 		
-		this.log().info("Processing " + message.getNumbers().get(0) + " to " + message.getNumbers().get(message.getNumbers().size() - 1));
+		this.log().info("Discovering primes p ({} <= p <= {})...", message.rangeMin, message.rangeMax);
 
-		// Do something interesting //
-		
 		// Iterate over the range of numbers, compute the primes, and return the list of numbers that are prime
-		final List<Object> result = new ArrayList<>();
-		for (Long number : message.getNumbers())
-			if (this.isPrime(number.longValue()))
-				result.add(number);
+		final List<Long> result = new ArrayList<>();
+		for (long i = message.rangeMin; i < message.rangeMax; i++) {
+			if (isPrime(i)) result.add(i);
+		}
 
-		this.getSender().tell(new Master.ObjectMessage(message.getId(), result), this.getSelf());
+		// Send the primes back.
+		this.getSender().tell(new Master.Primes(message.id, result), this.getSelf());
 
 		// Asynchronous version: Consider using a dedicated executor service.
 //		ActorRef sender = this.getSender();
@@ -76,7 +80,7 @@ public class Worker extends AbstractLoggingActor {
 //		});
 	}
 
-	private boolean isPrime(long n) {
+	private static boolean isPrime(long n) {
 		
 		// Check for the most basic primes
 		if (n == 1 || n == 2 || n == 3)

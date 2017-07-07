@@ -13,19 +13,18 @@ public class Listener extends AbstractLoggingActor {
 	public static Props props() {
 		return Props.create(Listener.class);
 	}
-	
-	public static class StringsMessage implements Serializable {
+
+	/**
+	 * Asks the listener to print the given message.
+	 */
+	public static class PrintMessage implements Serializable {
 		
 		private static final long serialVersionUID = -1779142448823490939L;
 		
-		private final List<String> strings;
+		private final String message;
 
-		public List<String> getStrings() {
-			return this.strings;
-		}
-
-		public StringsMessage(final List<String> strings) {
-			this.strings = strings;
+		public PrintMessage(final String message) {
+			this.message = message;
 		}
 	}
 
@@ -35,26 +34,23 @@ public class Listener extends AbstractLoggingActor {
 		Reaper.watchWithDefaultReaper(this);
 	}
 
+
+	@Override
+	public void postStop() throws Exception {
+		super.postStop();
+		log().info("Stopping {}...", self());
+	}
+
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
-				.match(StringsMessage.class, this::handle)
+				.match(PrintMessage.class, this::handle)
 				.matchAny(object -> this.log().info(this.getClass().getName() + " received unknown message: " + object.toString()))
 				.build();
 	}
 	
-	private void handle(StringsMessage stringsMessage) {
-		
-		this.log().info(this.asString(stringsMessage.getStrings()));
+	private void handle(PrintMessage printMessage) {
+		System.out.println(printMessage.message);
 	}
-	
-	private String asString(List<String> strings) {
-		
-		StringBuilder builder = new StringBuilder("[");
-		for (int i = 0; i < strings.size() - 1; i++)
-			builder.append(strings.get(i) + ",");
-		builder.append(strings.get(strings.size() - 1) + "]");
-		return builder.toString();
-	}
-	
+
 }

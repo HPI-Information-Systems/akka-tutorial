@@ -58,7 +58,7 @@ public class Main {
      * @param masterCommand defines the parameters of the master
      */
     private static void startMaster(MasterCommand masterCommand) {
-        Calculator.runMaster(masterCommand.host, masterCommand.port);
+        Calculator.runMaster(masterCommand.host, masterCommand.port, masterCommand.numLocalWorkers);
     }
 
     /**
@@ -77,6 +77,9 @@ public class Main {
     static class MasterCommand extends CommandBase {
 
         public static final int DEFAULT_PORT = 7877;
+
+        @Parameter(names = {"-w", "--workers"}, description = "number of workers to start locally")
+        int numLocalWorkers = 0;
 
         @Override
         int getDefaultPort() {

@@ -21,15 +21,12 @@ public class Shepherd extends AbstractLoggingActor {
 		
 		private static final long serialVersionUID = 6122957437037004535L;
 
-		private final Address address;
-
-		public SubscriptionMessage(Address address) {
-			this.address = address;
+		public SubscriptionMessage() {
 		}
 
 		@Override
 		public String toString() {
-			return "SubscriptionMessage[address=" + address + ']';
+			return "SubscriptionMessage";
 		}
 	}
 	
@@ -53,8 +50,10 @@ public class Shepherd extends AbstractLoggingActor {
 		// Shutdown all slaves
 		for (ActorRef slave : this.slaves)
 			slave.tell(new Slave.Shutdown(), this.getSelf());
+
+		log().info("Stopping {}...", self());
 	}
-	
+
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
@@ -77,8 +76,11 @@ public class Shepherd extends AbstractLoggingActor {
 		// Set the subscriber on the watch list to get its Terminated messages
 		this.getContext().watch(slave);
 
+		// Extract the remote system's address from the sender.
+		Address remoteAddress = this.getSender().path().address();
+
 		// Inform the master about the new remote system.
-		this.master.tell(new Master.RemoteSystemMessage(message.address), this.getSelf());
+		this.master.tell(new Master.RemoteSystemMessage(remoteAddress), this.getSelf());
 
 	}
 }

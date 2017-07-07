@@ -3,16 +3,12 @@ package de.hpi.akka_tutorial.remote.actors;
 import akka.actor.*;
 import akka.japi.pf.DeciderBuilder;
 import akka.remote.RemoteScope;
-import akka.routing.ActorRefRoutee;
-import akka.routing.RoundRobinRoutingLogic;
-import akka.routing.Routee;
-import akka.routing.Router;
 import scala.concurrent.duration.Duration;
 
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static akka.actor.SupervisorStrategy.escalate;
 import static akka.actor.SupervisorStrategy.stop;
@@ -24,8 +20,8 @@ public class Master extends AbstractLoggingActor {
 
 	public static final String DEFAULT_NAME = "master";
 
-	public static Props props(final ActorRef listener) {
-		return Props.create(Master.class, () -> new Master(listener));
+	public static Props props(final ActorRef listener, final int numLocalWorkers) {
+		return Props.create(Master.class, () -> new Master(listener, numLocalWorkers));
 	}
 
 	private static SupervisorStrategy strategy =
@@ -53,6 +49,11 @@ public class Master extends AbstractLoggingActor {
 			this.startNumber = startNumber;
 			this.endNumber = endNumber;
 		}
+
+		@Override
+		public String toString() {
+			return String.format("%s[%,d..%,d]", this.getClass().getSimpleName(), this.startNumber, this.endNumber);
+		}
 	}
 
 	/**
@@ -62,24 +63,17 @@ public class Master extends AbstractLoggingActor {
 	public static class NoMoreRangesMessage implements Serializable {
 	}
 
-	public static class ObjectMessage implements Serializable {
+	public static class Primes implements Serializable {
 
 		private static final long serialVersionUID = 4862570515887001983L;
 
-		private final Integer id;
-		private final List<Object> objects;
+		private final int requestId;
 
-		public Integer getId() {
-			return this.id;
-		}
+		private final List<Long> primes;
 
-		public List<Object> getObjects() {
-			return this.objects;
-		}
-
-		public ObjectMessage(final Integer id, final List<Object> objects) {
-			this.id = id;
-			this.objects = objects;
+		public Primes(final int requestId, final List<Long> primes) {
+			this.requestId = requestId;
+			this.primes = primes;
 		}
 	}
 
@@ -97,28 +91,149 @@ public class Master extends AbstractLoggingActor {
 		}
 	}
 
-	private Router workerRouter;
+	/**
+	 * This class supervises the state of a range query for primes.
+	 */
+	private class QueryTracker {
+
+		/**
+		 * Give each worker at most this many numbers at once to check.
+		 */
+		private final int MAX_SUBQUERY_RANGE_SIZE = 100000;
+
+		/**
+		 * The query that is being processed.
+		 */
+		private final RangeMessage rangeMessage;
+
+		/**
+		 * This ID of the query.
+		 */
+		private final int id;
+
+		/**
+		 * The lower bound for the next subquery.
+		 */
+		private long nextMinRange;
+
+		/**
+		 * Keeps track of the currently posed subqueries and which actor is processing it.
+		 */
+		private Map<ActorRef, Worker.PrimeDiscoveryTask> runningSubqueries = new HashMap<>();
+
+		/**
+		 * Keeps track of failed subqueries, so as to reschedule them to some worker.
+		 */
+		private final Queue<Worker.PrimeDiscoveryTask> failedSubqueries = new LinkedList<>();
+
+		/**
+		 * Collects the result.
+		 */
+		private final List<Long> primes = new ArrayList<>();
+
+		private QueryTracker(int id, RangeMessage rangeMessage) {
+			this.rangeMessage = rangeMessage;
+			this.id = id;
+			this.nextMinRange = rangeMessage.startNumber;
+		}
+
+		/**
+		 * Create a new subquery to ask some worker. If a subquery was available, it will be registered as "in progress"
+		 * with the worker.
+		 *
+		 * @return a new subquery or {@code null}
+		 */
+		Worker.PrimeDiscoveryTask pollNextSubquery(ActorRef actorRef) {
+			// Restart a failed subquery if any.
+			if (!failedSubqueries.isEmpty()) {
+				Worker.PrimeDiscoveryTask subquery = failedSubqueries.poll();
+				this.runningSubqueries.put(actorRef, subquery);
+				return subquery;
+			}
+
+			// Otherwise, form a new subquery.
+			long subqueryRangeSize = Math.min(this.rangeMessage.endNumber - this.nextMinRange + 1, MAX_SUBQUERY_RANGE_SIZE);
+			if (subqueryRangeSize > 0) {
+				Worker.PrimeDiscoveryTask subquery = new Worker.PrimeDiscoveryTask(this.id, this.nextMinRange, this.nextMinRange += subqueryRangeSize);
+				this.runningSubqueries.put(actorRef, subquery);
+				return subquery;
+			}
+
+			// If that's also not possible, return null.
+			return null;
+		}
+
+		/**
+		 * Handle the failure of a running subquery. That is, prepare to re-schedule the failed subquery.
+		 *
+		 * @param actorRef the failing actor whose subquery is to be re-scheduled
+		 */
+		void handleFailure(ActorRef actorRef) {
+			Worker.PrimeDiscoveryTask failedTask = this.runningSubqueries.remove(actorRef);
+			if (failedTask != null) {
+				this.failedSubqueries.add(failedTask);
+			}
+		}
+
+		/**
+		 * Collect an intermediate result.
+		 *
+		 * @param worker that produced the result
+		 * @param primes the resulting primes
+		 */
+		void collectResult(ActorRef worker, Collection<Long> primes) {
+			// Mark the query as completed.
+			Worker.PrimeDiscoveryTask finishedTask = this.runningSubqueries.remove(worker);
+			assert finishedTask != null;
+
+			// Collect the results.
+			this.primes.addAll(primes);
+		}
+
+		/**
+		 * Checks whether this query is complete, i.e., there are no more open or running subqueries.
+		 *
+		 * @return whether this query is complete
+		 */
+		boolean isComplete() {
+			return this.runningSubqueries.isEmpty()
+					&& this.failedSubqueries.isEmpty()
+					&& this.nextMinRange > this.rangeMessage.endNumber;
+		}
+
+	}
+
 	private final ActorRef listener;
 
-	private List<Integer> pendingResponses = new ArrayList<>();
-	private int numberOfWorkers = 0;
-	private final List<String> strings = new ArrayList<String>();
+	/**
+	 * The number of workers to run locally.
+	 */
+	private final int numLocalWorkers;
+
+	/**
+	 * Helper variable to assign unique IDs to each range query.
+	 */
+	private int nextQueryId = 0;
+
+	/**
+	 * Keep track of the progress of each range query. The queries are kept in their insertion order.
+	 */
+	private final LinkedHashMap<Integer, QueryTracker> queryId2tracker = new LinkedHashMap<>();
+
+	/**
+	 * Keep track of what each worker is currently doing.
+	 */
+	private final Map<ActorRef, QueryTracker> worker2tracker = new HashMap<>();
+
+	/**
+	 * Whether this actor is still accepting new {@link RangeMessage}s.
+	 */
 	private boolean isAcceptingRequests = true;
 
-	public Master(final ActorRef listener) {
-
+	public Master(final ActorRef listener, int numLocalWorkers) {
 		// Save the reference to the Listener actor
 		this.listener = listener;
-
-		// Create router with only one local routee
-		List<Routee> routees = new ArrayList<Routee>();
-
-		ActorRef workerRef = this.getContext().actorOf(Worker.props());
-		this.getContext().watch(workerRef);
-		routees.add(new ActorRefRoutee(workerRef));
-		this.numberOfWorkers++;
-
-		this.workerRouter = new Router(new RoundRobinRoutingLogic(), routees);
+		this.numLocalWorkers = numLocalWorkers;
 	}
 
 	@Override
@@ -130,6 +245,22 @@ public class Master extends AbstractLoggingActor {
 	public void preStart() throws Exception {
 		super.preStart();
 		Reaper.watchWithDefaultReaper(this);
+
+		// Start the specified number of local workers.
+		for (int i = 0; i < this.numLocalWorkers; i++) {
+			// Create a new worker with the given URI
+			ActorRef worker = this.getContext().actorOf(Worker.props());
+			this.worker2tracker.put(worker, null);
+
+			// Add the worker to the watch list and our router
+			this.getContext().watch(worker);
+		}
+	}
+
+	@Override
+	public void postStop() throws Exception {
+		super.postStop();
+		log().info("Stopping {}...", self());
 	}
 
 	@Override
@@ -137,9 +268,9 @@ public class Master extends AbstractLoggingActor {
 		return receiveBuilder()
 				.match(RemoteSystemMessage.class, this::handle)
 				.match(RangeMessage.class, this::handle)
-				.match(ObjectMessage.class, this::handle)
+				.match(Primes.class, this::handle)
 				.match(NoMoreRangesMessage.class, this::handle)
-				.match(Terminated.class, m -> this.numberOfWorkers--)
+				.match(Terminated.class, this::handle)
 				.matchAny(object -> this.log().info(this.getClass().getName() + " received unknown message: " + object.toString()))
 				.build();
 	}
@@ -148,15 +279,15 @@ public class Master extends AbstractLoggingActor {
 
 		// Create a new worker with the given URI
 		ActorRef worker = this.getContext().actorOf(Worker.props().withDeploy(new Deploy(new RemoteScope(message.remoteAddress))));
+		this.worker2tracker.put(worker, null);
 
 		// Add the worker to the watch list and our router
 		this.getContext().watch(worker);
-		this.workerRouter = this.workerRouter.addRoutee(worker);
-		this.numberOfWorkers++;
-
-		this.log().info("{}", this.workerRouter.routees());
 
 		this.log().info("New worker: " + worker);
+
+		// Assign possibly open subqueries to the new worker.
+		this.assignSubqueries();
 	}
 
 	private void handle(RangeMessage message) {
@@ -165,38 +296,48 @@ public class Master extends AbstractLoggingActor {
 			return;
 		}
 
-		// Find an ID for this message
-		final int messageId = this.pendingResponses.size();
+		// Create a new tracker for the query.
+		QueryTracker tracker = new QueryTracker(this.nextQueryId++, message);
+		this.queryId2tracker.put(tracker.id, tracker);
 
-		// Set the pending responses for this message
-		this.pendingResponses.add(this.numberOfWorkers);
-
-		// Break the work up into numberOfWorkers chunks of numbers
-		final long numberOfNumbers = message.getEndNumber() - message.getStartNumber() + 1;
-		final long segmentLength = numberOfNumbers / this.numberOfWorkers;
-
-		for (int i = 0; i < this.numberOfWorkers; i++) {
-			// Compute the start and end numbers for this worker
-			long startNumber = message.getStartNumber() + (i * segmentLength);
-			long endNumber = startNumber + segmentLength - 1;
-
-			// Handle any remainder if this is the last worker
-			if (i == this.numberOfWorkers - 1)
-				endNumber = message.getEndNumber();
-
-			// Calculate the numbers
-			List<Long> numbers = new ArrayList<Long>((int) (endNumber - startNumber) + 1);
-			for (long number = startNumber; number <= endNumber; number++)
-				numbers.add(number);
-
-			// Send a new message to the router for this subset of numbers
-			this.workerRouter.route(new Worker.NumbersMessage(messageId, numbers), this.getSelf());
-		}
+		// Assign existing, possible free, workers to the new query.
+		this.assignSubqueries();
 	}
 
+	/**
+	 * Assign currently free workers to subqueries.
+	 */
+	private void assignSubqueries() {
+		Collection<ActorRef> freeWorkers = this.worker2tracker.entrySet().stream()
+				.filter(e -> e.getValue() == null)
+				.map(Map.Entry::getKey)
+				.collect(Collectors.toList());
+
+		Iterator<QueryTracker> queryTrackerIterator = this.queryId2tracker.values().iterator();
+		if (!queryTrackerIterator.hasNext()) return;
+		QueryTracker nextQueryTracker = queryTrackerIterator.next();
+
+		for (ActorRef freeWorker : freeWorkers) {
+			// Determine the next open subquery.
+			Worker.PrimeDiscoveryTask subquery;
+			while ((subquery = nextQueryTracker.pollNextSubquery(freeWorker)) == null) {
+				if (!queryTrackerIterator.hasNext()) return;
+				nextQueryTracker = queryTrackerIterator.next();
+			}
+
+			// Assign the subquery to the worker and keep track of the assignment.
+			freeWorker.tell(subquery, this.getSelf());
+			this.worker2tracker.put(freeWorker, nextQueryTracker);
+		}
+
+	}
+
+	/**
+	 * Stop receiving new queries.
+	 */
 	private void handle(NoMoreRangesMessage message) {
 		this.isAcceptingRequests = false;
-		if (!this.hasPendingResponses()) {
+		if (!this.hasOpenQueries()) {
 			this.stopSelfAndListener();
 		}
 	}
@@ -206,34 +347,80 @@ public class Master extends AbstractLoggingActor {
 	 *
 	 * @return if there are still any pending responses
 	 */
-	private boolean hasPendingResponses() {
-		for (Integer pendingResponse : pendingResponses) {
-			if (pendingResponse != 0) return true;
-		}
-		return false;
+	private boolean hasOpenQueries() {
+		return !this.queryId2tracker.isEmpty();
 	}
 
-	private void handle(ObjectMessage message) {
+	/**
+	 * Receive a result of a subquery, i.e., a bunch of primes.
+	 *
+	 * @param message the primes
+	 */
+	private void handle(Primes message) {
+		// Find out who returned the result.
+		final ActorRef worker = this.getSender();
 
-		// Add the received objects from the worker to the final result
-		for (Object object : message.getObjects())
-			this.strings.add(object.toString());
+		// Find the query being processed.
+		QueryTracker queryTracker = this.queryId2tracker.get(message.requestId);
+		queryTracker.collectResult(worker, message.primes);
 
-		// Decrement the pending responses for this message
-		Integer pending = this.pendingResponses.get(message.getId()) - 1;
-		this.pendingResponses.set(message.getId(), pending);
+		// Mark the worker as free.
+		this.worker2tracker.put(worker, null);
 
-		if (pending == 0) {
+		// Check if the query is complete.
+		if (queryTracker.isComplete()) {
+			String primeList = queryTracker.primes.stream()
+					.mapToLong(Long::longValue)
+					.sorted()
+					.mapToObj(prime -> String.format("%,d", prime))
+					.collect(Collectors.joining("; "));
+			String queryResult = String.format("Primes between %,d and %,d: %s", queryTracker.rangeMessage.startNumber, queryTracker.rangeMessage.endNumber, primeList);
+
 			// Notify the listener
-			this.listener.tell(new Listener.StringsMessage(this.strings), this.getSelf());
+			this.listener.tell(new Listener.PrintMessage(queryResult), this.getSelf());
+
+			// Remove the query tracker.
+			this.queryId2tracker.remove(queryTracker.id);
 
 			// Check if work is now complete.
-			if (!this.isAcceptingRequests && !this.hasPendingResponses()) {
+			if (!this.isAcceptingRequests && !this.hasOpenQueries()) {
 				this.stopSelfAndListener();
 			}
+		} else {
+			// Re-assign the now free worker.
+			this.assignSubqueries();
 		}
 	}
 
+	/**
+	 * Handle a terminated worker that might have been running a query.
+	 */
+	private void handle(Terminated message) {
+		// Find out who terminated.
+		final ActorRef terminatedActor = this.getSender();
+
+		// Remove it from the list of worker.
+		QueryTracker processedTracker = this.worker2tracker.remove(terminatedActor);
+
+		// If the worker was processing some subquery, then we need to re-schedule this subquery.
+		if (processedTracker != null) {
+			this.log().warning("{} has terminated while processing {}.", terminatedActor, processedTracker.rangeMessage);
+			processedTracker.handleFailure(terminatedActor);
+
+			// We might have some free workers that could process the re-scheduled subquery.
+			this.assignSubqueries();
+		}
+
+		this.isAcceptingRequests = false;
+		if (!this.hasOpenQueries()) {
+			this.stopSelfAndListener();
+		}
+	}
+
+
+	/**
+	 * Stop this master and its associated listener.
+	 */
 	private void stopSelfAndListener() {
 		log().info("Stopping...");
 		getSelf().tell(PoisonPill.getInstance(), getSelf());
