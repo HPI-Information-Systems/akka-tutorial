@@ -52,7 +52,7 @@ public class Slave extends AbstractLoggingActor {
 		Reaper.watchWithDefaultReaper(this);
 
 		// Listen for disassociation with the master.
-//		this.getContext().getSystem().eventStream().subscribe(getSelf(), RemotingLifecycleEvent.class);
+		this.getContext().getSystem().eventStream().subscribe(getSelf(), DisassociatedEvent.class);
 	}
 
 	@Override
@@ -105,8 +105,11 @@ public class Slave extends AbstractLoggingActor {
 	}
 
 	private void handle(DisassociatedEvent event) {
-		log().error("Disassociated from master. Stopping...");
-		getContext().stop(getSelf());
+		if (this.connectSchedule == null) {
+			// The disassociation is a problem, once we have already connected. Before that, it's no problem, though.
+			log().error("Disassociated from master. Stopping...");
+			getContext().stop(getSelf());
+		}
 	}
 
 }
