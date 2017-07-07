@@ -2,6 +2,7 @@ package de.hpi.akka_tutorial.remote;
 
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
+import akka.actor.Address;
 import akka.actor.PoisonPill;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
@@ -16,10 +17,6 @@ public class Calculator {
 
 	private static final String masterSystemName = "MasterActorSystem";
 	private static final String slaveSystemName = "SlaveActorSystem";
-	private static final String shepherdName = "shepherd";
-	private static final String masterName = "master";
-	private static final String listenerName = "listener";
-	private static final String slaveName = "slave";
 
 	public static void runMaster(String host, int port) {
 		// Create the ActorSystem
@@ -38,13 +35,13 @@ public class Calculator {
 		actorSystem.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
 
 		// Create the Listener
-		final ActorRef listener = actorSystem.actorOf(Listener.props(), listenerName);
+		final ActorRef listener = actorSystem.actorOf(Listener.props(), Listener.DEFAULT_NAME);
 
 		// Create the Master
-		final ActorRef master = actorSystem.actorOf(Master.props(listener), masterName);
+		final ActorRef master = actorSystem.actorOf(Master.props(listener), Master.DEFAULT_NAME);
 
 		// Create the Shepherd
-		final ActorRef shepherd = actorSystem.actorOf(Shepherd.props(master), shepherdName);
+		final ActorRef shepherd = actorSystem.actorOf(Shepherd.props(master), Shepherd.DEFAULT_NAME);
 
 		// Read ranges from the console and process them
 		final Scanner scanner = new Scanner(System.in);
@@ -109,9 +106,9 @@ public class Calculator {
 		actorSystem.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
 
 		// Create a Slave
-		final ActorRef slave = actorSystem.actorOf(Slave.props(), slaveName);
+		final ActorRef slave = actorSystem.actorOf(Slave.props(), Slave.DEFAULT_NAME);
 
 		// Tell the Slave to register the local ActorSystem
-		slave.tell(new Slave.Connect(masterSystemName, masterHost, masterPort, shepherdName, slaveSystemName, host, port), ActorRef.noSender());
+		slave.tell(new Slave.Connect(new Address("akka.tcp", masterSystemName, masterHost, masterPort)), ActorRef.noSender());
 	}
 }

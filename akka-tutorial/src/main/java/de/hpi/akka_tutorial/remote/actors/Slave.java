@@ -1,14 +1,21 @@
 package de.hpi.akka_tutorial.remote.actors;
 
-import akka.actor.AbstractLoggingActor;
-import akka.actor.ActorSelection;
-import akka.actor.PoisonPill;
-import akka.actor.Props;
+import akka.actor.*;
 import akka.remote.DisassociatedEvent;
+import scala.concurrent.ExecutionContextExecutor;
+import scala.concurrent.duration.Duration;
 
 import java.io.Serializable;
+import java.util.concurrent.TimeUnit;
 
 public class Slave extends AbstractLoggingActor {
+
+	public static String DEFAULT_NAME = "slave";
+
+	/**
+	 * Scheduling item to keep on trying to reconnect as regularly.
+	 */
+	private Cancellable connectSchedule;
 
 	public static Props props() {
 		return Props.create(Slave.class);
@@ -18,51 +25,19 @@ public class Slave extends AbstractLoggingActor {
 
 		private static final long serialVersionUID = -4399047760637406556L;
 
-		private final String masterSystemName;
-		private final String masterIP;
-		private final int masterPort;
-		private final String shepherdName;
-		private final String slaveSystemName;
-		private final String slaveIP;
-		private final int slavePort;
+		private final Address address;
 
-		public String getMasterSystemName() {
-			return this.masterSystemName;
+		public Connect(Address address) {
+			this.address = address;
 		}
+	}
 
-		public String getMasterIP() {
-			return this.masterIP;
-		}
 
-		public int getMasterPort() {
-			return this.masterPort;
-		}
+	/**
+	 * This message signals that a connection request with a {@link Shepherd} actor was successful.
+	 */
+	public static class SubscriptionAcknowledgement implements Serializable {
 
-		public String getShepherdName() {
-			return this.shepherdName;
-		}
-
-		public String getSlaveSystemName() {
-			return slaveSystemName;
-		}
-
-		public String getSlaveIP() {
-			return slaveIP;
-		}
-
-		public int getSlavePort() {
-			return slavePort;
-		}
-
-		public Connect(String masterSystemName, String masterIP, int masterPort, String shepherdName, String slaveSystemName, String slaveIP, int slavePort) {
-			this.masterSystemName = masterSystemName;
-			this.masterIP = masterIP;
-			this.masterPort = masterPort;
-			this.shepherdName = shepherdName;
-			this.slaveSystemName = slaveSystemName;
-			this.slaveIP = slaveIP;
-			this.slavePort = slavePort;
-		}
 	}
 
 	public static class Shutdown implements Serializable {
@@ -70,18 +45,21 @@ public class Slave extends AbstractLoggingActor {
 		private static final long serialVersionUID = -8962039849767411379L;
 	}
 
+
 	@Override
 	public void preStart() throws Exception {
 		super.preStart();
-
 		Reaper.watchWithDefaultReaper(this);
-		getContext().getSystem().eventStream().subscribe(getSelf(), DisassociatedEvent.class);
+
+		// Listen for disassociation with the master.
+//		this.getContext().getSystem().eventStream().subscribe(getSelf(), RemotingLifecycleEvent.class);
 	}
 
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
 				.match(Connect.class, this::handle)
+				.match(SubscriptionAcknowledgement.class, this::handle)
 				.match(Shutdown.class, this::handle)
 				.match(DisassociatedEvent.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\" ({})", object, object.getClass()))
@@ -98,16 +76,37 @@ public class Slave extends AbstractLoggingActor {
 	}
 
 	private void handle(Connect message) {
+		if (this.connectSchedule != null) {
+			this.connectSchedule.cancel();
+			this.connectSchedule = null;
+		}
 
 		// Find the shepherd actor in the remote ActorSystem
-		ActorSelection selection = this.getContext().system().actorSelection("akka.tcp://" + message.getMasterSystemName() + "@" + message.getMasterIP() + ":" + message.getMasterPort() + "/user/" + message.getShepherdName());
+		ActorSelection selection = this.getContext().system().actorSelection(String.format("%s/user/%s", message.address, Shepherd.DEFAULT_NAME));
 
 		// Register the local ActorSystem by sending a subscription message
-		selection.tell(new Shepherd.Subscription(message.getSlaveSystemName(), message.getSlaveIP(), message.getSlavePort()), this.getSelf());
+		Scheduler scheduler = getContext().getSystem().scheduler();
+		ExecutionContextExecutor dispatcher = getContext().getSystem().dispatcher();
+		this.connectSchedule = scheduler.schedule(
+				Duration.Zero(),
+				Duration.create(5, TimeUnit.SECONDS),
+				() -> selection.tell(new Shepherd.SubscriptionMessage(message.address), this.getSelf()),
+				dispatcher
+		);
+	}
+
+	private void handle(SubscriptionAcknowledgement message) {
+		if (this.connectSchedule != null) {
+			this.connectSchedule.cancel();
+			this.connectSchedule = null;
+		}
+
+		log().info("Successfully acknowledged by {}.", getSender());
 	}
 
 	private void handle(DisassociatedEvent event) {
 		log().error("Disassociated from master. Stopping...");
 		getContext().stop(getSelf());
 	}
+
 }

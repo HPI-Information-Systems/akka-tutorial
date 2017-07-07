@@ -22,6 +22,8 @@ import static akka.actor.SupervisorStrategy.stop;
  */
 public class Master extends AbstractLoggingActor {
 
+	public static final String DEFAULT_NAME = "master";
+
 	public static Props props(final ActorRef listener) {
 		return Props.create(Master.class, () -> new Master(listener));
 	}
@@ -81,18 +83,17 @@ public class Master extends AbstractLoggingActor {
 		}
 	}
 
-	public static class URIMessage implements Serializable {
+	/**
+	 * This message states that there is a remote actor system that the master can use to delegate work to.
+	 */
+	public static class RemoteSystemMessage implements Serializable {
 
 		private static final long serialVersionUID = 2786272840353304769L;
 
-		private final String uri;
+		private final Address remoteAddress;
 
-		public String getURI() {
-			return this.uri;
-		}
-
-		public URIMessage(String uri) {
-			this.uri = uri;
+		public RemoteSystemMessage(Address remoteAddress) {
+			this.remoteAddress = remoteAddress;
 		}
 	}
 
@@ -134,7 +135,7 @@ public class Master extends AbstractLoggingActor {
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
-				.match(URIMessage.class, this::handle)
+				.match(RemoteSystemMessage.class, this::handle)
 				.match(RangeMessage.class, this::handle)
 				.match(ObjectMessage.class, this::handle)
 				.match(NoMoreRangesMessage.class, this::handle)
@@ -143,11 +144,10 @@ public class Master extends AbstractLoggingActor {
 				.build();
 	}
 
-	private void handle(URIMessage message) {
+	private void handle(RemoteSystemMessage message) {
 
 		// Create a new worker with the given URI
-		Address address = AddressFromURIString.parse(message.getURI());
-		ActorRef worker = this.getContext().actorOf(Worker.props().withDeploy(new Deploy(new RemoteScope(address))));
+		ActorRef worker = this.getContext().actorOf(Worker.props().withDeploy(new Deploy(new RemoteScope(message.remoteAddress))));
 
 		// Add the worker to the watch list and our router
 		this.getContext().watch(worker);
@@ -156,7 +156,7 @@ public class Master extends AbstractLoggingActor {
 
 		this.log().info("{}", this.workerRouter.routees());
 
-		this.log().info("New worker: " + message.getURI());
+		this.log().info("New worker: " + worker);
 	}
 
 	private void handle(RangeMessage message) {

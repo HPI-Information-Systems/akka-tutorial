@@ -7,7 +7,9 @@ import akka.actor.AbstractLoggingActor;
 import akka.actor.Props;
 
 public class Listener extends AbstractLoggingActor {
-	
+
+	public static final String DEFAULT_NAME = "listener";
+
 	public static Props props() {
 		return Props.create(Listener.class);
 	}

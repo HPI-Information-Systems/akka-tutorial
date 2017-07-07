@@ -1,57 +1,41 @@
 package de.hpi.akka_tutorial.remote.actors;
 
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 
-import akka.actor.AbstractLoggingActor;
-import akka.actor.ActorRef;
-import akka.actor.Props;
-import akka.actor.Terminated;
+import akka.actor.*;
 
 /**
  * The shepherd lives in the master actor system and waits for slave subscriptions.
  */
 public class Shepherd extends AbstractLoggingActor {
 
+	public static final String DEFAULT_NAME = "shepherd";
+
 	public static Props props(final ActorRef master) {
 		return Props.create(Shepherd.class, () -> new Shepherd(master));
 	}
 	
-	public static class Subscription implements Serializable {
+	public static class SubscriptionMessage implements Serializable {
 		
 		private static final long serialVersionUID = 6122957437037004535L;
 
-		private final String name;
-		private final String ip;
-		private final int port;
+		private final Address address;
 
-		public String getName() {
-			return this.name;
+		public SubscriptionMessage(Address address) {
+			this.address = address;
 		}
 
-		public String getIp() {
-			return this.ip;
-		}
-
-		public int getPort() {
-			return this.port;
-		}
-
-		public Subscription(final String name, final String ip, final int port) {
-			this.name = name;
-			this.ip = ip;
-			this.port = port;
-		}
-		
 		@Override
 		public String toString() {
-			return "akka.tcp://" + this.getName() + "@" + this.getIp() + ":" + this.getPort();
+			return "SubscriptionMessage[address=" + address + ']';
 		}
 	}
 	
 	private final ActorRef master;
-	private final List<ActorRef> slaves = new ArrayList<>();
+
+	private final Set<ActorRef> slaves = new HashSet<>();
 	
 	public Shepherd(final ActorRef master) {
 		this.master = master;
@@ -74,24 +58,27 @@ public class Shepherd extends AbstractLoggingActor {
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
-				.match(Subscription.class, this::handle)
+				.match(SubscriptionMessage.class, this::handle)
 				.match(Terminated.class, s -> this.slaves.remove(this.getSender()))
 				.matchAny(object -> this.log().info(this.getClass().getName() + " received unknown message: " + object.toString()))
 				.build();
 	}
 	
-	private void handle(Subscription message) {
-		
-		// Set the subscriber on the watch list to get its Terminated messages
-		this.getContext().watch(this.getSender());
-		
-		// Set the subscriber on the slaves list to terminate its ActorSystem if this ActorSystem terminates
-		this.slaves.add(this.getSender());
-		
-		// Tell the master about the new slave
-		this.master.tell(new Master.URIMessage(message.toString()), this.getSelf()); 
-		
-		// Log the subscription
+	private void handle(SubscriptionMessage message) {
+		ActorRef slave = this.getSender();
+
+		// Keep track of all subscribed slaves but avoid double subscription.
+		if (!this.slaves.add(slave)) return;
 		this.log().info("New subscription: " + message.toString());
+
+		// Acknowledge the subscription.
+		slave.tell(new Slave.SubscriptionAcknowledgement(), this.getSelf());
+
+		// Set the subscriber on the watch list to get its Terminated messages
+		this.getContext().watch(slave);
+
+		// Inform the master about the new remote system.
+		this.master.tell(new Master.RemoteSystemMessage(message.address), this.getSelf());
+
 	}
 }
