@@ -5,8 +5,8 @@ import akka.actor.ActorSystem;
 import akka.actor.Address;
 import akka.actor.PoisonPill;
 import com.typesafe.config.Config;
-import com.typesafe.config.ConfigFactory;
 import de.hpi.akka_tutorial.remote.actors.*;
+import de.hpi.akka_tutorial.util.AkkaUtils;
 import scala.concurrent.Await;
 import scala.concurrent.duration.Duration;
 
@@ -20,15 +20,7 @@ public class Calculator {
 
 	public static void runMaster(String host, int port, int numLocalWorkers) {
 		// Create the ActorSystem
-		final Config config = ConfigFactory.parseString("akka.actor.provider = remote")
-			//	.withFallback(ConfigFactory.parseString("akka.actor.serializers.proto = \"akka.remote.serialization.ProtobufSerializer\""))
-			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"java.io.Serializable\" = none"))
-			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"de.hpi.akka_tutorial.remote.actors.Worker.NumbersMessage\" = proto"))
-			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"de.hpi.akka_tutorial.remote.actors.Master.ObjectMessage\" = proto"))
-				.withFallback(ConfigFactory.parseString("akka.remote.enabled-transports = [\"akka.remote.netty.tcp\"]"))
-				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.hostname = " + host))
-				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.port = " + port))
-				.withFallback(ConfigFactory.load("common"));
+		final Config config = AkkaUtils.createRemoteAkkaConfig(host, port);
 		final ActorSystem actorSystem = ActorSystem.create(masterSystemName, config);
 
 		// Create the reaper.
@@ -47,21 +39,26 @@ public class Calculator {
 		final Scanner scanner = new Scanner(System.in);
 		while (true) {
 
-			// Read input
-			System.out.printf("Enter a range to analyze for primes (\"min,max\"): ");
-			String line = scanner.nextLine();
+			try {
+				// Read input
+				System.out.printf("Enter a range to analyze for primes (\"min,max\"): ");
+				String line = scanner.nextLine();
 
-			// Check for correct range message
-			String[] lineSplit = line.split(",");
-			if (lineSplit.length != 2)
-				break;
+				// Check for correct range message
+				String[] lineSplit = line.split(",");
+				if (lineSplit.length != 2)
+					break;
 
-			// Extract start- and endNumber
-			long startNumber = Long.valueOf(lineSplit[0]);
-			long endNumber = Long.valueOf(lineSplit[1]);
+				// Extract start- and endNumber
+				long startNumber = Long.valueOf(lineSplit[0]);
+				long endNumber = Long.valueOf(lineSplit[1]);
 
-			// Start the calculation
-			master.tell(new Master.RangeMessage(startNumber, endNumber), ActorRef.noSender());
+				// Start the calculation
+				master.tell(new Master.RangeMessage(startNumber, endNumber), ActorRef.noSender());
+			} catch (Exception e) {
+				e.printStackTrace();
+				System.exit(-1);
+			}
 
 			// Sleep to reduce mixing of log messages with the regular stdout messages.
 			try {
@@ -91,15 +88,7 @@ public class Calculator {
 	public static void runSlave(String host, int port, String masterHost, int masterPort) {
 
 		// Create the local ActorSystem
-		final Config config = ConfigFactory.parseString("akka.actor.provider = remote")
-			//	.withFallback(ConfigFactory.parseString("akka.actor.serializers.proto = \"akka.remote.serialization.ProtobufSerializer\""))
-			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"java.io.Serializable\" = none"))
-			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"de.hpi.akka_tutorial.remote.actors.Worker.NumbersMessage\" = proto"))
-			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"de.hpi.akka_tutorial.remote.actors.Master.ObjectMessage\" = proto"))
-				.withFallback(ConfigFactory.parseString("akka.remote.enabled-transports = [\"akka.remote.netty.tcp\"]"))
-				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.hostname = " + host))
-				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.port = " + port))
-				.withFallback(ConfigFactory.load("common"));
+		final Config config = AkkaUtils.createRemoteAkkaConfig(host, port);
 		final ActorSystem actorSystem = ActorSystem.create(slaveSystemName, config);
 
 		// Create the reaper.
