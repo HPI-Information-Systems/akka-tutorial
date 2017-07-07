@@ -35,15 +35,13 @@ public class Calculator {
 		final ActorSystem actorSystem = ActorSystem.create(masterSystemName, config);
 
 		// Create the reaper.
-		final ActorRef reaper = actorSystem.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
+		actorSystem.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
 
 		// Create the Listener
 		final ActorRef listener = actorSystem.actorOf(Listener.props(), listenerName);
-		reaper.tell(new Reaper.WatchMeMessage(), listener);
 
 		// Create the Master
 		final ActorRef master = actorSystem.actorOf(Master.props(listener), masterName);
-		reaper.tell(new Reaper.WatchMeMessage(), master);
 
 		// Create the Shepherd
 		final ActorRef shepherd = actorSystem.actorOf(Shepherd.props(master), shepherdName);
@@ -108,11 +106,10 @@ public class Calculator {
 		final ActorSystem actorSystem = ActorSystem.create(slaveSystemName, config);
 
 		// Create the reaper.
-		final ActorRef reaper = actorSystem.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
+		actorSystem.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
 
 		// Create a Slave
 		final ActorRef slave = actorSystem.actorOf(Slave.props(), slaveName);
-		reaper.tell(new Reaper.WatchMeMessage(), slave);
 
 		// Tell the Slave to register the local ActorSystem
 		slave.tell(new Slave.Connect(masterSystemName, masterHost, masterPort, shepherdName, slaveSystemName, host, port), ActorRef.noSender());

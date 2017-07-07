@@ -56,10 +56,16 @@ public class Shepherd extends AbstractLoggingActor {
 	public Shepherd(final ActorRef master) {
 		this.master = master;
 	}
-	
+
+	@Override
+	public void preStart() throws Exception {
+		super.preStart();
+		Reaper.watchWithDefaultReaper(this);
+	}
+
 	@Override
 	public void postStop() throws Exception {
-		
+		super.postStop();
 		// Shutdown all slaves
 		for (ActorRef slave : this.slaves)
 			slave.tell(new Slave.Shutdown(), this.getSelf());

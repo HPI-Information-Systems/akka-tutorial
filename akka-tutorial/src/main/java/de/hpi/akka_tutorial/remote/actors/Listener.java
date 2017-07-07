@@ -28,6 +28,12 @@ public class Listener extends AbstractLoggingActor {
 	}
 
 	@Override
+	public void preStart() throws Exception {
+		super.preStart();
+		Reaper.watchWithDefaultReaper(this);
+	}
+
+	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
 				.match(StringsMessage.class, this::handle)

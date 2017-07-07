@@ -126,6 +126,12 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	@Override
+	public void preStart() throws Exception {
+		super.preStart();
+		Reaper.watchWithDefaultReaper(this);
+	}
+
+	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
 				.match(URIMessage.class, this::handle)
