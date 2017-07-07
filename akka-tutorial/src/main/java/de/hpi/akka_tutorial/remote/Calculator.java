@@ -35,7 +35,7 @@ public class Calculator {
 		final ActorSystem actorSystem = ActorSystem.create(masterSystemName, config);
 
 		// Create the reaper.
-		final ActorRef reaper = actorSystem.actorOf(Reaper.props(), "reaper");
+		final ActorRef reaper = actorSystem.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
 
 		// Create the Listener
 		final ActorRef listener = actorSystem.actorOf(Listener.props(), listenerName);
@@ -67,6 +67,12 @@ public class Calculator {
 
 			// Start the calculation
 			master.tell(new Master.RangeMessage(startNumber, endNumber), ActorRef.noSender());
+
+			// Sleep to reduce mixing of log messages with the regular stdout messages.
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e) {
+			}
 		}
 		scanner.close();
 		System.out.println("Stopping...");
@@ -101,8 +107,12 @@ public class Calculator {
 				.withFallback(ConfigFactory.load("common"));
 		final ActorSystem actorSystem = ActorSystem.create(slaveSystemName, config);
 
+		// Create the reaper.
+		final ActorRef reaper = actorSystem.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
+
 		// Create a Slave
 		final ActorRef slave = actorSystem.actorOf(Slave.props(), slaveName);
+		reaper.tell(new Reaper.WatchMeMessage(), slave);
 
 		// Tell the Slave to register the local ActorSystem
 		slave.tell(new Slave.Connect(masterSystemName, masterHost, masterPort, shepherdName, slaveSystemName, host, port), ActorRef.noSender());

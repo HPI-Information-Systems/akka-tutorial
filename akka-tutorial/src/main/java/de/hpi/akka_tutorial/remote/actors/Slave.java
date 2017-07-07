@@ -4,6 +4,7 @@ import java.io.Serializable;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorSelection;
+import akka.actor.PoisonPill;
 import akka.actor.Props;
 
 public class Slave extends AbstractLoggingActor {
@@ -80,10 +81,10 @@ public class Slave extends AbstractLoggingActor {
 	private void handle(Shutdown message) {
 		
 		// Log remote shutdown message
-		this.log().info("Remote asked to shutdown this ActorSystem.");
+		this.log().info("Asked to stop.");
 		
 		// Shutdown this system
-		this.getContext().system().terminate();
+		self().tell(PoisonPill.getInstance(), self());
 	}
 	
 	private void handle(Connect message) {

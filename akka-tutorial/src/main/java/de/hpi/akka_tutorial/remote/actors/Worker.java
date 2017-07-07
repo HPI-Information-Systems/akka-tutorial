@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import akka.actor.AbstractLoggingActor;
+import akka.actor.ActorPath;
 import akka.actor.Props;
 
 public class Worker extends AbstractLoggingActor {
@@ -33,7 +34,13 @@ public class Worker extends AbstractLoggingActor {
 			this.numbers = numbers;
 		}
 	}
-	
+
+	@Override
+	public void preStart() throws Exception {
+		super.preStart();
+		Reaper.watchWithDefaultReaper(this);
+	}
+
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()

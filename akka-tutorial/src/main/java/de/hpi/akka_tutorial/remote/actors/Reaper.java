@@ -11,6 +11,8 @@ import java.util.Set;
  */
 public class Reaper extends AbstractLoggingActor {
 
+	public static final String DEFAULT_NAME = "reaper";
+
 	/**
 	 * This message tells the reaper to watch for the termination of the sender.
 	 */
@@ -30,6 +32,17 @@ public class Reaper extends AbstractLoggingActor {
 	 */
 	public static Props props() {
 		return Props.create(Reaper.class);
+	}
+
+	/**
+	 * Haves the given {@link AbstractActor} being watched with the default reaper in the local {@link ActorSystem}.
+	 *
+	 * @param actor to be watched
+	 * @see #DEFAULT_NAME the name of the default reaper
+	 */
+	public static void watchWithDefaultReaper(AbstractActor actor) {
+		ActorSelection defaultReaper = actor.getContext().getSystem().actorSelection("/user/" + DEFAULT_NAME);
+		defaultReaper.tell(new WatchMeMessage(), actor.getSelf());
 	}
 
 	@Override
