@@ -21,41 +21,14 @@ import scala.concurrent.duration.Duration;
 
 public class Calculator {
 
-	private final String masterSystemName = "MasterActorSystem";
-	private final String masterIP = "192.168.1.4";//"172.17.24.120";
-	private final String masterPort = "2552";
-	
-	private final String slaveSystemName = "SlaveActorSystem";
-	private final String slaveIP = "192.168.1.4";//"172.17.24.120";
-	private final String slavePort = "2553";
-	
-	private final String shepherdName = "shepherd";
-	private final String masterName = "master";
-	private final String listenerName = "listener";
-	private final String slaveName = "slave";
-	
-	private final boolean isMaster = true;//false//
-	
-	private final List<Subscription> subscriptions = new ArrayList<>();
-	
-	public synchronized void addSubscription(Subscription subscription) {
-		this.subscriptions.add(subscription);
-	}
-	
-	public synchronized List<Subscription> getSubscriptions() {
-		return new ArrayList<>(this.subscriptions);
-	}
-	
-	public void calculate(final long startNumber, final long endNumber) {
+	private static final String masterSystemName = "MasterActorSystem";
+	private static final String slaveSystemName = "SlaveActorSystem";
+	private static final String shepherdName = "shepherd";
+	private static final String masterName = "master";
+	private static final String listenerName = "listener";
+	private static final String slaveName = "slave";
 
-		if (this.isMaster)
-			this.startMaster();
-		else
-			this.startSlave();
-	}
-
-	private void startMaster() {
-
+	public static void runMaster(String host, int port) {
 		// Create the ActorSystem
 		final Config config = ConfigFactory.parseString("akka.actor.provider = remote")
 			//	.withFallback(ConfigFactory.parseString("akka.actor.serializers.proto = \"akka.remote.serialization.ProtobufSerializer\""))
@@ -63,19 +36,19 @@ public class Calculator {
 			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"de.hpi.akka_tutorial.remote.actors.Worker.NumbersMessage\" = proto"))
 			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"de.hpi.akka_tutorial.remote.actors.Master.ObjectMessage\" = proto"))
 				.withFallback(ConfigFactory.parseString("akka.remote.enabled-transports = [\"akka.remote.netty.tcp\"]"))
-				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.hostname = " + this.masterIP))
-				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.port = " + this.masterPort))
+				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.hostname = " + host))
+				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.port = " + port))
 				.withFallback(ConfigFactory.load("common"));
-		final ActorSystem actorSystem = ActorSystem.create(this.masterSystemName, config);
+		final ActorSystem actorSystem = ActorSystem.create(masterSystemName, config);
 
 		// Create the Listener
-		final ActorRef listener = actorSystem.actorOf(Listener.props(), this.listenerName);
+		final ActorRef listener = actorSystem.actorOf(Listener.props(), listenerName);
 
 		// Create the Master
-		final ActorRef master = actorSystem.actorOf(Master.props(listener), this.masterName);
+		final ActorRef master = actorSystem.actorOf(Master.props(listener), masterName);
 
 		// Create the Shepherd
-		final ActorRef shepherd = actorSystem.actorOf(Shepherd.props(master), this.shepherdName);
+		final ActorRef shepherd = actorSystem.actorOf(Shepherd.props(master), shepherdName);
 		
 		// Read ranges from the console and process them
 		final Scanner scanner = new Scanner(System.in);
@@ -102,8 +75,9 @@ public class Calculator {
 		
 		shepherd.tell(PoisonPill.getInstance(), ActorRef.noSender()); // stop via message (asynchronously; all current messages in the queue are processed first but no new)
 	//	actorSystem.stop(shepherd); // stop via call (only the current message is processed but no further messages from the queue)
-		
-		master.tell(Shutdown.class, sender); // Finish worker, stop worker, poisenpill listener
+
+		// TODO
+//		master.tell(Shutdown.class, sender); // Finish worker, stop worker, poisenpill listener
 		
 		// now the reaper will terminate the actorsystem
 		
@@ -119,7 +93,7 @@ public class Calculator {
 		System.out.println("ActorSystem finished!");
 	}
 
-	private void startSlave() {
+	public static void runSlave(String host, int port, String masterHost, int masterPort) {
 
 		// Create the local ActorSystem
 		final Config config = ConfigFactory.parseString("akka.actor.provider = remote")
@@ -128,15 +102,15 @@ public class Calculator {
 			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"de.hpi.akka_tutorial.remote.actors.Worker.NumbersMessage\" = proto"))
 			//	.withFallback(ConfigFactory.parseString("akka.actor.serialization-bindings.\"de.hpi.akka_tutorial.remote.actors.Master.ObjectMessage\" = proto"))
 				.withFallback(ConfigFactory.parseString("akka.remote.enabled-transports = [\"akka.remote.netty.tcp\"]"))
-				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.hostname = " + this.slaveIP))
-				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.port = " + this.slavePort))
+				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.hostname = " + host))
+				.withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.port = " + port))
 				.withFallback(ConfigFactory.load("common"));
-		final ActorSystem actorSystem = ActorSystem.create(this.slaveSystemName, config);
+		final ActorSystem actorSystem = ActorSystem.create(slaveSystemName, config);
 
 		// Create a Slave
-		final ActorRef slave = actorSystem.actorOf(Slave.props(), this.slaveName);
+		final ActorRef slave = actorSystem.actorOf(Slave.props(), slaveName);
 		
 		// Tell the Slave to register the local ActorSystem
-		slave.tell(new Slave.Connect(this.masterSystemName, this.masterIP, this.masterPort, this.shepherdName, this.slaveSystemName, this.slaveIP, this.slavePort), ActorRef.noSender());
+		slave.tell(new Slave.Connect(masterSystemName, masterHost, masterPort, shepherdName, slaveSystemName, host, port), ActorRef.noSender());
 	}
 }

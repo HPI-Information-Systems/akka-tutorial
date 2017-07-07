@@ -21,7 +21,7 @@ public class Shepherd extends AbstractLoggingActor {
 
 		private final String name;
 		private final String ip;
-		private final String port;
+		private final int port;
 
 		public String getName() {
 			return this.name;
@@ -31,11 +31,11 @@ public class Shepherd extends AbstractLoggingActor {
 			return this.ip;
 		}
 
-		public String getPort() {
+		public int getPort() {
 			return this.port;
 		}
 
-		public Subscription(final String name, final String ip, final String port) {
+		public Subscription(final String name, final String ip, final int port) {
 			this.name = name;
 			this.ip = ip;
 			this.port = port;

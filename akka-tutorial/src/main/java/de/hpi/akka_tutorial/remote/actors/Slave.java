@@ -18,11 +18,11 @@ public class Slave extends AbstractLoggingActor {
 
 		private final String masterSystemName;
 		private final String masterIP;
-		private final String masterPort;
+		private final int masterPort;
 		private final String shepherdName;
 		private final String slaveSystemName;
 		private final String slaveIP;
-		private final String slavePort;
+		private final int slavePort;
 		
 		public String getMasterSystemName() {
 			return this.masterSystemName;
@@ -32,7 +32,7 @@ public class Slave extends AbstractLoggingActor {
 			return this.masterIP;
 		}
 		
-		public String getMasterPort() {
+		public int getMasterPort() {
 			return this.masterPort;
 		}
 		
@@ -48,11 +48,11 @@ public class Slave extends AbstractLoggingActor {
 			return slaveIP;
 		}
 
-		public String getSlavePort() {
+		public int getSlavePort() {
 			return slavePort;
 		}
 
-		public Connect(String masterSystemName, String masterIP, String masterPort, String shepherdName, String slaveSystemName, String slaveIP, String slavePort) {
+		public Connect(String masterSystemName, String masterIP, int masterPort, String shepherdName, String slaveSystemName, String slaveIP, int slavePort) {
 			this.masterSystemName = masterSystemName;
 			this.masterIP = masterIP;
 			this.masterPort = masterPort;
