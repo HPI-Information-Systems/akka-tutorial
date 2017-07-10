@@ -24,12 +24,6 @@ public class Master extends AbstractLoggingActor {
 		return Props.create(Master.class, () -> new Master(listener, numLocalWorkers));
 	}
 
-	private static SupervisorStrategy strategy =
-			new OneForOneStrategy(0, Duration.create(1, TimeUnit.SECONDS), DeciderBuilder
-					.match(Exception.class, e -> stop())
-					.matchAny(o -> escalate())
-					.build());
-
 	public static class RangeMessage implements Serializable {
 
 		private static final long serialVersionUID = 1538940836039448197L;
@@ -60,13 +54,15 @@ public class Master extends AbstractLoggingActor {
 	 * This message tells that no further {@link RangeMessage}s will be sent. The master should terminate then as soon
 	 * as all pending work is done.
 	 */
-	public static class NoMoreRangesMessage implements Serializable {
+	public static class ShutdownMessage implements Serializable {
+
+		private static final long serialVersionUID = -6270485216802183364L;
 	}
 
 	/**
-	 * This message is the answer on a {@link Worker.PrimeDiscoveryTask subquery}.
+	 * This message is the answer to a {@link Worker.ValidationMessage subquery}.
 	 */
-	public static class Primes implements Serializable {
+	public static class PrimesMessage implements Serializable {
 
 		private static final long serialVersionUID = 4862570515887001983L;
 
@@ -83,7 +79,7 @@ public class Master extends AbstractLoggingActor {
 		 * @param primes     some discovered primes
 		 * @param isComplete whether all primes of the current subquery have been discovered
 		 */
-		public Primes(final int requestId, final List<Long> primes, boolean isComplete) {
+		public PrimesMessage(final int requestId, final List<Long> primes, boolean isComplete) {
 			this.requestId = requestId;
 			this.primes = primes;
 			this.isComplete = isComplete;
@@ -103,6 +99,12 @@ public class Master extends AbstractLoggingActor {
 			this.remoteAddress = remoteAddress;
 		}
 	}
+
+	private static SupervisorStrategy strategy =
+			new OneForOneStrategy(0, Duration.create(1, TimeUnit.SECONDS), DeciderBuilder
+					.match(Exception.class, e -> stop())
+					.matchAny(o -> escalate())
+					.build());
 
 	/**
 	 * This class supervises the state of a range query for primes.
@@ -132,12 +134,12 @@ public class Master extends AbstractLoggingActor {
 		/**
 		 * Keeps track of the currently posed subqueries and which actor is processing it.
 		 */
-		private Map<ActorRef, Worker.PrimeDiscoveryTask> runningSubqueries = new HashMap<>();
+		private Map<ActorRef, Worker.ValidationMessage> runningSubqueries = new HashMap<>();
 
 		/**
 		 * Keeps track of failed subqueries, so as to reschedule them to some worker.
 		 */
-		private final Queue<Worker.PrimeDiscoveryTask> failedSubqueries = new LinkedList<>();
+		private final Queue<Worker.ValidationMessage> failedSubqueries = new LinkedList<>();
 
 		/**
 		 * Collects the result.
@@ -156,23 +158,23 @@ public class Master extends AbstractLoggingActor {
 		 *
 		 * @return a new subquery or {@code null}
 		 */
-		Worker.PrimeDiscoveryTask pollNextSubquery(ActorRef actorRef) {
-			// Restart a failed subquery if any.
-			if (!failedSubqueries.isEmpty()) {
-				Worker.PrimeDiscoveryTask subquery = failedSubqueries.poll();
+		Worker.ValidationMessage pollNextSubquery(ActorRef actorRef) {
+			// Restart a failed subquery if any
+			if (!this.failedSubqueries.isEmpty()) {
+				Worker.ValidationMessage subquery = this.failedSubqueries.poll();
 				this.runningSubqueries.put(actorRef, subquery);
 				return subquery;
 			}
 
-			// Otherwise, form a new subquery.
+			// Otherwise, form a new subquery
 			long subqueryRangeSize = Math.min(this.rangeMessage.endNumber - this.nextMinRange + 1, MAX_SUBQUERY_RANGE_SIZE);
 			if (subqueryRangeSize > 0) {
-				Worker.PrimeDiscoveryTask subquery = new Worker.PrimeDiscoveryTask(this.id, this.nextMinRange, this.nextMinRange += subqueryRangeSize);
+				Worker.ValidationMessage subquery = new Worker.ValidationMessage(this.id, this.nextMinRange, this.nextMinRange += subqueryRangeSize);
 				this.runningSubqueries.put(actorRef, subquery);
 				return subquery;
 			}
 
-			// If that's also not possible, return null.
+			// If that's also not possible, return null
 			return null;
 		}
 
@@ -182,7 +184,7 @@ public class Master extends AbstractLoggingActor {
 		 * @param actorRef the failing actor whose subquery is to be re-scheduled
 		 */
 		void handleFailure(ActorRef actorRef) {
-			Worker.PrimeDiscoveryTask failedTask = this.runningSubqueries.remove(actorRef);
+			Worker.ValidationMessage failedTask = this.runningSubqueries.remove(actorRef);
 			if (failedTask != null) {
 				this.failedSubqueries.add(failedTask);
 			}
@@ -196,12 +198,12 @@ public class Master extends AbstractLoggingActor {
 		 */
 		void collectResult(ActorRef worker, Collection<Long> primes, boolean isComplete) {
 			if (isComplete) {
-				// Mark the query as completed.
-				Worker.PrimeDiscoveryTask finishedTask = this.runningSubqueries.remove(worker);
+				// Mark the query as completed
+				Worker.ValidationMessage finishedTask = this.runningSubqueries.remove(worker);
 				assert finishedTask != null;
 			}
 
-			// Collect the results.
+			// Collect the results
 			this.primes.addAll(primes);
 		}
 
@@ -259,9 +261,11 @@ public class Master extends AbstractLoggingActor {
 	@Override
 	public void preStart() throws Exception {
 		super.preStart();
+		
+		// Register at this actor system's reaper
 		Reaper.watchWithDefaultReaper(this);
 
-		// Start the specified number of local workers.
+		// Start the specified number of local workers
 		for (int i = 0; i < this.numLocalWorkers; i++) {
 			// Create a new worker with the given URI
 			ActorRef worker = this.getContext().actorOf(Worker.props());
@@ -283,8 +287,8 @@ public class Master extends AbstractLoggingActor {
 		return receiveBuilder()
 				.match(RemoteSystemMessage.class, this::handle)
 				.match(RangeMessage.class, this::handle)
-				.match(Primes.class, this::handle)
-				.match(NoMoreRangesMessage.class, this::handle)
+				.match(PrimesMessage.class, this::handle)
+				.match(ShutdownMessage.class, this::handle)
 				.match(Terminated.class, this::handle)
 				.matchAny(object -> this.log().info(this.getClass().getName() + " received unknown message: " + object.toString()))
 				.build();
@@ -301,21 +305,21 @@ public class Master extends AbstractLoggingActor {
 
 		this.log().info("New worker: " + worker);
 
-		// Assign possibly open subqueries to the new worker.
+		// Assign possibly open subqueries to the new worker
 		this.assignSubqueries();
 	}
 
 	private void handle(RangeMessage message) {
 		if (!this.isAcceptingRequests) {
-			log().warning("Discarding request {}.", message);
+			this.log().warning("Discarding request {}.", message);
 			return;
 		}
 
-		// Create a new tracker for the query.
+		// Create a new tracker for the query
 		QueryTracker tracker = new QueryTracker(this.nextQueryId++, message);
 		this.queryId2tracker.put(tracker.id, tracker);
 
-		// Assign existing, possible free, workers to the new query.
+		// Assign existing, possible free, workers to the new query
 		this.assignSubqueries();
 	}
 
@@ -329,18 +333,20 @@ public class Master extends AbstractLoggingActor {
 				.collect(Collectors.toList());
 
 		Iterator<QueryTracker> queryTrackerIterator = this.queryId2tracker.values().iterator();
-		if (!queryTrackerIterator.hasNext()) return;
+		if (!queryTrackerIterator.hasNext()) 
+			return;
 		QueryTracker nextQueryTracker = queryTrackerIterator.next();
 
 		for (ActorRef freeWorker : freeWorkers) {
-			// Determine the next open subquery.
-			Worker.PrimeDiscoveryTask subquery;
+			// Determine the next open subquery
+			Worker.ValidationMessage subquery;
 			while ((subquery = nextQueryTracker.pollNextSubquery(freeWorker)) == null) {
-				if (!queryTrackerIterator.hasNext()) return;
+				if (!queryTrackerIterator.hasNext()) 
+					return;
 				nextQueryTracker = queryTrackerIterator.next();
 			}
 
-			// Assign the subquery to the worker and keep track of the assignment.
+			// Assign the subquery to the worker and keep track of the assignment
 			freeWorker.tell(subquery, this.getSelf());
 			this.worker2tracker.put(freeWorker, nextQueryTracker);
 		}
@@ -350,7 +356,7 @@ public class Master extends AbstractLoggingActor {
 	/**
 	 * Stop receiving new queries.
 	 */
-	private void handle(NoMoreRangesMessage message) {
+	private void handle(ShutdownMessage message) {
 		this.isAcceptingRequests = false;
 		if (!this.hasOpenQueries()) {
 			this.stopSelfAndListener();
@@ -371,24 +377,25 @@ public class Master extends AbstractLoggingActor {
 	 *
 	 * @param message the primes
 	 */
-	private void handle(Primes message) {
-		// Find out who returned the result.
+	private void handle(PrimesMessage message) {
+		// Find out who returned the result
 		final ActorRef worker = this.getSender();
 
-		// Find the query being processed.
+		// Find the query being processed
 		QueryTracker queryTracker = this.queryId2tracker.get(message.requestId);
 		queryTracker.collectResult(worker, message.primes, message.isComplete);
 
-		// Log a short status update.
-		log().info(String.format("Got %,d primes between %,d and %,d.", queryTracker.primes.size(), queryTracker.rangeMessage.startNumber, queryTracker.rangeMessage.endNumber));
+		// Log a short status update
+		this.log().info(String.format("Got %,d primes between %,d and %,d.", queryTracker.primes.size(), queryTracker.rangeMessage.startNumber, queryTracker.rangeMessage.endNumber));
 
-		// If the worker only returned an intermediate result, no further action is required.
-		if (!message.isComplete) return;
+		// If the worker only returned an intermediate result, no further action is required
+		if (!message.isComplete) 
+			return;
 
-		// Mark the worker as free.
+		// Mark the worker as free
 		this.worker2tracker.put(worker, null);
 
-		// Check if the query is complete.
+		// Check if the query is complete
 		if (queryTracker.isComplete()) {
 			String primeList = queryTracker.primes.stream()
 					.mapToLong(Long::longValue)
@@ -400,15 +407,15 @@ public class Master extends AbstractLoggingActor {
 			// Notify the listener
 			this.listener.tell(new Listener.PrintMessage(queryResult), this.getSelf());
 
-			// Remove the query tracker.
+			// Remove the query tracker
 			this.queryId2tracker.remove(queryTracker.id);
 
-			// Check if work is now complete.
+			// Check if work is now complete
 			if (!this.isAcceptingRequests && !this.hasOpenQueries()) {
 				this.stopSelfAndListener();
 			}
 		} else {
-			// Re-assign the now free worker.
+			// Re-assign the now free worker
 			this.assignSubqueries();
 		}
 	}
@@ -417,34 +424,34 @@ public class Master extends AbstractLoggingActor {
 	 * Handle a terminated worker that might have been running a query.
 	 */
 	private void handle(Terminated message) {
-		// Find out who terminated.
+		// Find out who terminated
 		final ActorRef terminatedActor = this.getSender();
 
-		// Remove it from the list of worker.
+		// Remove it from the list of worker
 		QueryTracker processedTracker = this.worker2tracker.remove(terminatedActor);
 
-		// If the worker was processing some subquery, then we need to re-schedule this subquery.
+		// If the worker was processing some subquery, then we need to re-schedule this subquery
 		if (processedTracker != null) {
 			this.log().warning("{} has terminated while processing {}.", terminatedActor, processedTracker.rangeMessage);
 			processedTracker.handleFailure(terminatedActor);
 
-			// We might have some free workers that could process the re-scheduled subquery.
+			// We might have some free workers that could process the re-scheduled subquery
 			this.assignSubqueries();
 		}
 
+		// TODO: Why do we initiate a stop when a worker terminated? Since we do not stop the shepherd here, the actor system would not terminate?
 		this.isAcceptingRequests = false;
 		if (!this.hasOpenQueries()) {
 			this.stopSelfAndListener();
 		}
 	}
 
-
 	/**
 	 * Stop this master and its associated listener.
 	 */
 	private void stopSelfAndListener() {
-		log().info("Stopping...");
-		getSelf().tell(PoisonPill.getInstance(), getSelf());
-		this.listener.tell(PoisonPill.getInstance(), getSelf());
+		this.log().info("Stopping...");
+		this.getSelf().tell(PoisonPill.getInstance(), this.getSelf());
+		this.listener.tell(PoisonPill.getInstance(), this.getSelf());
 	}
 }

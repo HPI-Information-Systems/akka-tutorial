@@ -12,7 +12,8 @@ import java.net.UnknownHostException;
 public class Main {
 
     public static void main(String[] args) {
-        // Parse the command-line args.
+        
+    	// Parse the command-line args.
         MasterCommand masterCommand = new MasterCommand();
         SlaveCommand slaveCommand = new SlaveCommand();
         JCommander jCommander = JCommander.newBuilder()
@@ -73,44 +74,54 @@ public class Main {
     /**
      * Command to start a master.
      */
-    @Parameters(commandDescription = "start a master")
+    @Parameters(commandDescription = "start a master actor system")
     static class MasterCommand extends CommandBase {
 
-        public static final int DEFAULT_PORT = 7877;
-
-        @Parameter(names = {"-w", "--workers"}, description = "number of workers to start locally")
-        int numLocalWorkers = 0;
+        public static final int DEFAULT_PORT = 7877; // We use twin primes for master and slaves, of course! ;P
 
         @Override
         int getDefaultPort() {
-            return DEFAULT_PORT; // We use twin primes for master and slaves, of course! ;P
+            return DEFAULT_PORT;
         }
-
+        
+        /**
+         * Defines the number of workers that this actor system should spawn.
+         */
+        @Parameter(names = {"-w", "--workers"}, description = "number of workers to start locally")
+        int numLocalWorkers = 0;
     }
 
     /**
      * Command to start a slave.
      */
-    @Parameters(commandDescription = "start a slave")
+    @Parameters(commandDescription = "start a slave actor system")
     static class SlaveCommand extends CommandBase {
 
+    	public static final int DEFAULT_PORT = 7879; // We use twin primes for master and slaves, of course! ;P
+    	
         @Override
         int getDefaultPort() {
-            return 7879; // We use twin primes for master and slaves, of course! ;P
+            return DEFAULT_PORT;
         }
 
-        @Parameter(names = "--master", description = "host[:port] of the master", required = true)
+        /**
+         * Defines the address, i.e., host and port of the master actor system.
+         */
+        @Parameter(names = {"-m", "--master"}, description = "host[:port] of the master", required = true)
         String master;
 
         String getMasterHost() {
             int colonIndex = this.master.lastIndexOf(':');
-            if (colonIndex == -1) return this.master;
+            if (colonIndex == -1) 
+            	return this.master;
             return this.master.substring(0, colonIndex);
         }
 
         int getMasterPort() {
             int colonIndex = this.master.lastIndexOf(':');
-            if (colonIndex == -1) return MasterCommand.DEFAULT_PORT;
+            if (colonIndex == -1) {
+            	return MasterCommand.DEFAULT_PORT;
+            }
             String portSpec = this.master.substring(colonIndex + 1);
             try {
                 return Integer.parseInt(portSpec);
@@ -130,13 +141,18 @@ public class Main {
          * Defines the address that we want to bind the Akka remoting interface to.
          */
         @Parameter(names = {"-h", "--host"}, description = "host/IP to bind against")
-        String host;
+        String host = this.getDefaultHost();
 
-        {
+        /**
+         * Provide the default host.
+         *
+         * @return the default host
+         */
+        String getDefaultHost() {
             try {
-                this.host = InetAddress.getLocalHost().getHostAddress();
+                return InetAddress.getLocalHost().getHostAddress();
             } catch (UnknownHostException e) {
-                this.host = "localhost";
+                return "localhost";
             }
         }
 
@@ -149,6 +165,5 @@ public class Main {
          * @return the default port
          */
         abstract int getDefaultPort();
-
     }
 }

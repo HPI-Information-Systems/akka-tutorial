@@ -14,18 +14,6 @@ public class Reaper extends AbstractLoggingActor {
 	public static final String DEFAULT_NAME = "reaper";
 
 	/**
-	 * This message tells the reaper to watch for the termination of the sender.
-	 */
-	public static class WatchMeMessage implements Serializable {
-
-	}
-
-	/**
-	 * Keep track of the actors to be reaped eventually.
-	 */
-	private final Set<ActorRef> watchees = new HashSet<>();
-
-	/**
 	 * Create {@link Props} to create a new reaper actor.
 	 *
 	 * @return the {@link Props}
@@ -33,6 +21,19 @@ public class Reaper extends AbstractLoggingActor {
 	public static Props props() {
 		return Props.create(Reaper.class);
 	}
+
+	/**
+	 * This message tells the reaper to watch for the termination of the sender.
+	 */
+	public static class WatchMeMessage implements Serializable {
+
+		private static final long serialVersionUID = -5201749681392553264L;
+	}
+
+	/**
+	 * Keep track of the actors to be reaped eventually.
+	 */
+	private final Set<ActorRef> watchees = new HashSet<>();
 
 	/**
 	 * Haves the given {@link AbstractActor} being watched with the default reaper in the local {@link ActorSystem}.
@@ -54,8 +55,8 @@ public class Reaper extends AbstractLoggingActor {
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
-				.match(WatchMeMessage.class, this::handleWatchMe)
-				.match(Terminated.class, this::handleTerminated)
+				.match(WatchMeMessage.class, this::handle)
+				.match(Terminated.class, this::handle)
 				.matchAny(object -> this.log().error(this.getClass().getName() + " received unknown message: " + object.toString()))
 				.build();
 	}
@@ -65,11 +66,11 @@ public class Reaper extends AbstractLoggingActor {
 	 *
 	 * @param msg the message
 	 */
-	private void handleWatchMe(WatchMeMessage msg) {
+	private void handle(WatchMeMessage msg) {
 		ActorRef sender = getSender();
 		if (this.watchees.add(sender)) {
-			getContext().watch(sender);
-			log().info("Start watching {}...", sender);
+			this.getContext().watch(sender);
+			this.log().info("Start watching {}...", sender);
 		}
 	}
 
@@ -78,16 +79,16 @@ public class Reaper extends AbstractLoggingActor {
 	 *
 	 * @param msg the message
 	 */
-	private void handleTerminated(Terminated msg) {
+	private void handle(Terminated msg) {
 		ActorRef actor = msg.getActor();
 		if (this.watchees.remove(actor)) {
-			log().info("Reaping {}.", actor);
+			this.log().info("Reaping {}.", actor);
 			if (this.watchees.isEmpty()) {
-				log().info("Everyone has been reaped. Terminating the actor system...");
-				getContext().getSystem().terminate();
+				this.log().info("Everyone has been reaped. Terminating the actor system...");
+				this.getContext().getSystem().terminate();
 			}
 		} else {
-			log().error("Got termination message from unwatched {}.", actor);
+			this.log().error("Got termination message from unwatched {}.", actor);
 		}
 	}
 

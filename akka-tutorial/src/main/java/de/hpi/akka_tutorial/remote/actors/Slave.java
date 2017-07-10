@@ -10,48 +10,50 @@ import java.util.concurrent.TimeUnit;
 
 public class Slave extends AbstractLoggingActor {
 
-	public static String DEFAULT_NAME = "slave";
+	public static final String DEFAULT_NAME = "slave";
+
+	public static Props props() {
+		return Props.create(Slave.class);
+	}
+
+	public static class AddressMessage implements Serializable {
+
+		private static final long serialVersionUID = -4399047760637406556L;
+
+		private final Address address;
+
+		public AddressMessage(Address address) {
+			this.address = address;
+		}
+	}
+
+	/**
+	 * This message signals that a connection request with a {@link Shepherd} actor was successful.
+	 */
+	public static class AcknowledgementMessage implements Serializable {
+
+		private static final long serialVersionUID = 2289467879887081348L;
+
+	}
+
+	public static class ShutdownMessage implements Serializable {
+
+		private static final long serialVersionUID = -8962039849767411379L;
+	}
 
 	/**
 	 * Scheduling item to keep on trying to reconnect as regularly.
 	 */
 	private Cancellable connectSchedule;
 
-	public static Props props() {
-		return Props.create(Slave.class);
-	}
-
-	public static class Connect implements Serializable {
-
-		private static final long serialVersionUID = -4399047760637406556L;
-
-		private final Address address;
-
-		public Connect(Address address) {
-			this.address = address;
-		}
-	}
-
-
-	/**
-	 * This message signals that a connection request with a {@link Shepherd} actor was successful.
-	 */
-	public static class SubscriptionAcknowledgement implements Serializable {
-
-	}
-
-	public static class Shutdown implements Serializable {
-
-		private static final long serialVersionUID = -8962039849767411379L;
-	}
-
-
 	@Override
 	public void preStart() throws Exception {
 		super.preStart();
+		
+		// Register at this actor system's reaper
 		Reaper.watchWithDefaultReaper(this);
 
-		// Listen for disassociation with the master.
+		// Listen for disassociation with the master
 		this.getContext().getSystem().eventStream().subscribe(getSelf(), DisassociatedEvent.class);
 	}
 
@@ -65,35 +67,37 @@ public class Slave extends AbstractLoggingActor {
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
-				.match(Connect.class, this::handle)
-				.match(SubscriptionAcknowledgement.class, this::handle)
-				.match(Shutdown.class, this::handle)
+				.match(AddressMessage.class, this::handle)
+				.match(AcknowledgementMessage.class, this::handle)
+				.match(ShutdownMessage.class, this::handle)
 				.match(DisassociatedEvent.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\" ({})", object, object.getClass()))
 				.build();
 	}
 
-	private void handle(Shutdown message) {
+	private void handle(ShutdownMessage message) {
 
 		// Log remote shutdown message
 		this.log().info("Asked to stop.");
 
 		// Shutdown this system
-		self().tell(PoisonPill.getInstance(), self());
+		this.getSelf().tell(PoisonPill.getInstance(), this.getSelf());
 	}
 
-	private void handle(Connect message) {
+	private void handle(AddressMessage message) {
+		
+		// Cancel any running connect schedule
 		if (this.connectSchedule != null) {
 			this.connectSchedule.cancel();
 			this.connectSchedule = null;
 		}
 
 		// Find the shepherd actor in the remote ActorSystem
-		ActorSelection selection = this.getContext().system().actorSelection(String.format("%s/user/%s", message.address, Shepherd.DEFAULT_NAME));
+		final ActorSelection selection = this.getContext().system().actorSelection(String.format("%s/user/%s", message.address, Shepherd.DEFAULT_NAME));
 
-		// Register the local ActorSystem by sending a subscription message
-		final Scheduler scheduler = getContext().getSystem().scheduler();
-		final ExecutionContextExecutor dispatcher = getContext().getSystem().dispatcher();
+		// Register the local ActorSystem by periodically sending subscription messages (until an acknowledgement was received)
+		final Scheduler scheduler = this.getContext().getSystem().scheduler();
+		final ExecutionContextExecutor dispatcher = this.getContext().getSystem().dispatcher();
 		this.connectSchedule = scheduler.schedule(
 				Duration.Zero(),
 				Duration.create(5, TimeUnit.SECONDS),
@@ -102,13 +106,13 @@ public class Slave extends AbstractLoggingActor {
 		);
 	}
 
-	private void handle(SubscriptionAcknowledgement message) {
+	private void handle(AcknowledgementMessage message) {
 		if (this.connectSchedule != null) {
 			this.connectSchedule.cancel();
 			this.connectSchedule = null;
 		}
 
-		log().info("Successfully acknowledged by {}.", getSender());
+		this.log().info("Successfully acknowledged by {}.", getSender());
 	}
 
 	private void handle(DisassociatedEvent event) {

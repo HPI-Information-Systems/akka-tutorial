@@ -1,13 +1,13 @@
 package de.hpi.akka_tutorial.util;
 
-import com.typesafe.config.Config;
-import com.typesafe.config.ConfigFactory;
-
 import java.io.*;
 import java.util.Objects;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigFactory;
 
 /**
  * Utilities for Akka.

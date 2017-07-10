@@ -8,17 +8,17 @@ import akka.actor.AbstractLoggingActor;
 import akka.actor.Props;
 
 public class Worker extends AbstractLoggingActor {
-	
+
+	private static final int MAX_PRIMES_PER_MESSAGE = 1000;
+
 	public static Props props() {
 		return Props.create(Worker.class);
 	}
 
-	private static final int MAX_PRIMES_PER_MESSAGE = 1000;
-
 	/**
 	 * Requests a worker to discover all primes in a given range.
 	 */
-	public static class PrimeDiscoveryTask implements Serializable {
+	public static class ValidationMessage implements Serializable {
 		
 		private static final long serialVersionUID = -7467053227355130231L;
 		
@@ -29,7 +29,7 @@ public class Worker extends AbstractLoggingActor {
 		 */
 		private final long rangeMin, rangeMax;
 
-		public PrimeDiscoveryTask(int id, long rangeMin, long rangeMax) {
+		public ValidationMessage(int id, long rangeMin, long rangeMax) {
 			this.id = id;
 			this.rangeMin = rangeMin;
 			this.rangeMax = rangeMax;
@@ -39,6 +39,8 @@ public class Worker extends AbstractLoggingActor {
 	@Override
 	public void preStart() throws Exception {
 		super.preStart();
+		
+		// Register at this actor system's reaper
 		Reaper.watchWithDefaultReaper(this);
 	}
 
@@ -51,12 +53,12 @@ public class Worker extends AbstractLoggingActor {
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
-				.match(PrimeDiscoveryTask.class, this::handle)
+				.match(ValidationMessage.class, this::handle)
 				.matchAny(object -> this.log().info(this.getClass().getName() + " received unknown message: " + object.toString()))
 				.build();
 	}
 
-	private void handle(PrimeDiscoveryTask message) {
+	private void handle(ValidationMessage message) {
 		
 		this.log().info("Discovering primes p ({} <= p <= {})...", message.rangeMin, message.rangeMax);
 
@@ -68,7 +70,7 @@ public class Worker extends AbstractLoggingActor {
 				if (primeBuffer.size() >= MAX_PRIMES_PER_MESSAGE) {
 					// Attention: Never send mutable objects in a message!!!11 Here, we create a copy of our mutable buffer.
 					ArrayList<Long> primeBufferCopy = new ArrayList<>(primeBuffer);
-					this.getSender().tell(new Master.Primes(message.id, primeBufferCopy, false), this.getSelf());
+					this.getSender().tell(new Master.PrimesMessage(message.id, primeBufferCopy, false), this.getSelf());
 					primeBuffer.clear();
 				}
 				primeBuffer.add(i);
@@ -76,7 +78,7 @@ public class Worker extends AbstractLoggingActor {
 		}
 
 		// Send the primes back.
-		this.getSender().tell(new Master.Primes(message.id, primeBuffer, true), this.getSelf());
+		this.getSender().tell(new Master.PrimesMessage(message.id, primeBuffer, true), this.getSelf());
 
 		// Asynchronous version: Consider using a dedicated executor service.
 //		ActorRef sender = this.getSender();

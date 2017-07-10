@@ -20,14 +20,6 @@ public class Shepherd extends AbstractLoggingActor {
 	public static class SubscriptionMessage implements Serializable {
 		
 		private static final long serialVersionUID = 6122957437037004535L;
-
-		public SubscriptionMessage() {
-		}
-
-		@Override
-		public String toString() {
-			return "SubscriptionMessage";
-		}
 	}
 	
 	private final ActorRef master;
@@ -41,6 +33,8 @@ public class Shepherd extends AbstractLoggingActor {
 	@Override
 	public void preStart() throws Exception {
 		super.preStart();
+		
+		// Register at this actor system's reaper
 		Reaper.watchWithDefaultReaper(this);
 	}
 
@@ -49,7 +43,7 @@ public class Shepherd extends AbstractLoggingActor {
 		super.postStop();
 		// Shutdown all slaves
 		for (ActorRef slave : this.slaves)
-			slave.tell(new Slave.Shutdown(), this.getSelf());
+			slave.tell(new Slave.ShutdownMessage(), this.getSelf());
 
 		log().info("Stopping {}...", self());
 	}
@@ -68,10 +62,10 @@ public class Shepherd extends AbstractLoggingActor {
 
 		// Keep track of all subscribed slaves but avoid double subscription.
 		if (!this.slaves.add(slave)) return;
-		this.log().info("New subscription: " + message.toString());
+		this.log().info("New subscription: " + slave);
 
 		// Acknowledge the subscription.
-		slave.tell(new Slave.SubscriptionAcknowledgement(), this.getSelf());
+		slave.tell(new Slave.AcknowledgementMessage(), this.getSelf());
 
 		// Set the subscriber on the watch list to get its Terminated messages
 		this.getContext().watch(slave);

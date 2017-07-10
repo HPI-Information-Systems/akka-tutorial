@@ -1,7 +1,6 @@
 package de.hpi.akka_tutorial.remote.actors;
 
 import java.io.Serializable;
-import java.util.List;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.Props;
@@ -31,6 +30,8 @@ public class Listener extends AbstractLoggingActor {
 	@Override
 	public void preStart() throws Exception {
 		super.preStart();
+		
+		// Register at this actor system's reaper
 		Reaper.watchWithDefaultReaper(this);
 	}
 

@@ -15,15 +15,16 @@ import java.util.concurrent.TimeoutException;
 
 public class Calculator {
 
-	private static final String masterSystemName = "MasterActorSystem";
-	private static final String slaveSystemName = "SlaveActorSystem";
+	private static final String DEFAULT_MASTER_SYSTEM_NAME = "MasterActorSystem";
+	private static final String DEFAULT_SLAVE_SYSTEM_NAME = "SlaveActorSystem";
 
 	public static void runMaster(String host, int port, int numLocalWorkers) {
+		
 		// Create the ActorSystem
 		final Config config = AkkaUtils.createRemoteAkkaConfig(host, port);
-		final ActorSystem actorSystem = ActorSystem.create(masterSystemName, config);
+		final ActorSystem actorSystem = ActorSystem.create(DEFAULT_MASTER_SYSTEM_NAME, config);
 
-		// Create the reaper.
+		// Create the Reaper.
 		actorSystem.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
 
 		// Create the Listener
@@ -38,10 +39,9 @@ public class Calculator {
 		// Read ranges from the console and process them
 		final Scanner scanner = new Scanner(System.in);
 		while (true) {
-
 			try {
 				// Read input
-				System.out.printf("Enter a range to analyze for primes (\"min,max\"): ");
+				System.out.printf("Enter a range to analyze for primes (\"min,max\") or any non-range command for shutdown: ");
 				String line = scanner.nextLine();
 
 				// Check for correct range message
@@ -55,7 +55,12 @@ public class Calculator {
 
 				// Start the calculation
 				master.tell(new Master.RangeMessage(startNumber, endNumber), ActorRef.noSender());
+				
+			} catch (NumberFormatException e) {
+				// Ignore and shutdown
+				break;
 			} catch (Exception e) {
+				// Print and exit
 				e.printStackTrace();
 				System.exit(-1);
 			}
@@ -69,13 +74,13 @@ public class Calculator {
 		scanner.close();
 		System.out.println("Stopping...");
 
-		// At this point, we do not accept any new subscriptions.
+		// Do not accept any new subscriptions
 		shepherd.tell(PoisonPill.getInstance(), ActorRef.noSender()); // stop via message (asynchronously; all current messages in the queue are processed first but no new)
 
-		// Furthermore, we tell the master that we will not send any further requests.
-		master.tell(new Master.NoMoreRangesMessage(), ActorRef.noSender());
+		// Tell the master that we will not send any further requests
+		master.tell(new Master.ShutdownMessage(), ActorRef.noSender());
 
-		// Await termination: The termination should be issued by the reaper.
+		// Await termination: The termination should be issued by the reaper
 		try {
 			Await.ready(actorSystem.whenTerminated(), Duration.Inf());
 		} catch (TimeoutException | InterruptedException e) {
@@ -89,7 +94,7 @@ public class Calculator {
 
 		// Create the local ActorSystem
 		final Config config = AkkaUtils.createRemoteAkkaConfig(host, port);
-		final ActorSystem actorSystem = ActorSystem.create(slaveSystemName, config);
+		final ActorSystem actorSystem = ActorSystem.create(DEFAULT_SLAVE_SYSTEM_NAME, config);
 
 		// Create the reaper.
 		actorSystem.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
@@ -98,6 +103,6 @@ public class Calculator {
 		final ActorRef slave = actorSystem.actorOf(Slave.props(), Slave.DEFAULT_NAME);
 
 		// Tell the Slave to register the local ActorSystem
-		slave.tell(new Slave.Connect(new Address("akka.tcp", masterSystemName, masterHost, masterPort)), ActorRef.noSender());
+		slave.tell(new Slave.AddressMessage(new Address("akka.tcp", DEFAULT_MASTER_SYSTEM_NAME, masterHost, masterPort)), ActorRef.noSender());
 	}
 }
