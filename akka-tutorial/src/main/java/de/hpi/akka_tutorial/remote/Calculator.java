@@ -41,9 +41,24 @@ public class Calculator {
 		while (true) {
 			try {
 				// Read input
-				System.out.printf("Enter a range to analyze for primes (\"min,max\") or any non-range command for shutdown: ");
+				System.out.printf("Enter a range \"<min>,<max>\" to analyze for primes, "
+						+ "the command \"all\" to log all calculated prime, "
+						+ "the command \"max\" to log the largest calculated prime, "
+						+ "or any non-range command for shutdown: ");
 				String line = scanner.nextLine();
 
+				// Check for "all" command
+				if (line.equals("all")) {
+					listener.tell(new Listener.LogPrimesMessage(), ActorRef.noSender());
+					continue;
+				}
+				
+				// Check for "max" command
+				if (line.equals("max")) {
+					listener.tell(new Listener.LogMaxMessage(), ActorRef.noSender());
+					continue;
+				}
+				
 				// Check for correct range message
 				String[] lineSplit = line.split(",");
 				if (lineSplit.length != 2)

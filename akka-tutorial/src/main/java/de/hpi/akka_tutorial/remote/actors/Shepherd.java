@@ -13,10 +13,18 @@ public class Shepherd extends AbstractLoggingActor {
 
 	public static final String DEFAULT_NAME = "shepherd";
 
+	/**
+	 * Create the {@link Props} necessary to instantiate new {@link Shepherd} actors.
+	 *
+	 * @return the {@link Props}
+	 */
 	public static Props props(final ActorRef master) {
 		return Props.create(Shepherd.class, () -> new Shepherd(master));
 	}
 	
+	/**
+	 * Asks the {@link Shepherd} to subscribe the sender and its (remote) actor system as a slave to this actor system.
+	 */
 	public static class SubscriptionMessage implements Serializable {
 		
 		private static final long serialVersionUID = 6122957437037004535L;

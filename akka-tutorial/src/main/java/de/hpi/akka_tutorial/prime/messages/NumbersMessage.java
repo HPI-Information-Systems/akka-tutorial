@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+@Deprecated
 public class NumbersMessage implements Serializable {
 	
 	private static final long serialVersionUID = 1538940836039448197L;

@@ -20,10 +20,18 @@ public class Master extends AbstractLoggingActor {
 
 	public static final String DEFAULT_NAME = "master";
 
+	/**
+	 * Create the {@link Props} necessary to instantiate new {@link Master} actors.
+	 *
+	 * @return the {@link Props}
+	 */
 	public static Props props(final ActorRef listener, final int numLocalWorkers) {
 		return Props.create(Master.class, () -> new Master(listener, numLocalWorkers));
 	}
 
+	/**
+	 * Asks the {@link Master} to start the distributed calculation of prime numbers in a given range.
+	 */
 	public static class RangeMessage implements Serializable {
 
 		private static final long serialVersionUID = 1538940836039448197L;
@@ -51,8 +59,8 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	/**
-	 * This message tells that no further {@link RangeMessage}s will be sent. The master should terminate then as soon
-	 * as all pending work is done.
+	 * Asks the {@link Master} to complete the distributed calculation of prime numbers and to stop its actor hierarchy afterwards.
+	 * The {@link Master} will, in particular, not accept any further {@link RangeMessage}s after this message was received.
 	 */
 	public static class ShutdownMessage implements Serializable {
 
@@ -60,7 +68,7 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	/**
-	 * This message is the answer to a {@link Worker.ValidationMessage subquery}.
+	 * Asks the {@link Master} to process some primes as the answer to a {@link Worker.ValidationMessage}.
 	 */
 	public static class PrimesMessage implements Serializable {
 
@@ -87,7 +95,7 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	/**
-	 * This message states that there is a remote actor system that the master can use to delegate work to.
+	 * Asks the {@link Master} to schedule work to a new remote actor system.
 	 */
 	public static class RemoteSystemMessage implements Serializable {
 
@@ -140,12 +148,7 @@ public class Master extends AbstractLoggingActor {
 		 * Keeps track of failed subqueries, so as to reschedule them to some worker.
 		 */
 		private final Queue<Worker.ValidationMessage> failedSubqueries = new LinkedList<>();
-
-		/**
-		 * Collects the result.
-		 */
-		private final List<Long> primes = new ArrayList<>();
-
+		
 		private QueryTracker(int id, RangeMessage rangeMessage) {
 			this.rangeMessage = rangeMessage;
 			this.id = id;
@@ -191,20 +194,14 @@ public class Master extends AbstractLoggingActor {
 		}
 
 		/**
-		 * Collect an intermediate result.
+		 * States that an actor has completed its work package.
 		 *
-		 * @param worker that produced the result
-		 * @param primes the resulting primes
+		 * @param worker the actor that just completed
 		 */
-		void collectResult(ActorRef worker, Collection<Long> primes, boolean isComplete) {
-			if (isComplete) {
-				// Mark the query as completed
-				Worker.ValidationMessage finishedTask = this.runningSubqueries.remove(worker);
-				assert finishedTask != null;
-			}
-
-			// Collect the results
-			this.primes.addAll(primes);
+		void notifyWorkDone(ActorRef worker) {
+			// Mark the query as completed
+			Worker.ValidationMessage finishedTask = this.runningSubqueries.remove(worker);
+			assert finishedTask != null;
 		}
 
 		/**
@@ -378,35 +375,26 @@ public class Master extends AbstractLoggingActor {
 	 * @param message the primes
 	 */
 	private void handle(PrimesMessage message) {
-		// Find out who returned the result
-		final ActorRef worker = this.getSender();
-
-		// Find the query being processed
-		QueryTracker queryTracker = this.queryId2tracker.get(message.requestId);
-		queryTracker.collectResult(worker, message.primes, message.isComplete);
-
-		// Log a short status update
-		this.log().info(String.format("Got %,d primes between %,d and %,d.", queryTracker.primes.size(), queryTracker.rangeMessage.startNumber, queryTracker.rangeMessage.endNumber));
+		
+		// Forward the calculated primes to the listener
+		this.listener.tell(new Listener.PrimesMessage(message.primes), this.getSelf());
 
 		// If the worker only returned an intermediate result, no further action is required
 		if (!message.isComplete) 
 			return;
-
+		
+		// Find out who returned the result
+		final ActorRef worker = this.getSender();
+		
+		// Find the query being processed
+		QueryTracker queryTracker = this.queryId2tracker.get(message.requestId);
+		
 		// Mark the worker as free
+		queryTracker.notifyWorkDone(worker);
 		this.worker2tracker.put(worker, null);
 
 		// Check if the query is complete
 		if (queryTracker.isComplete()) {
-			String primeList = queryTracker.primes.stream()
-					.mapToLong(Long::longValue)
-					.sorted()
-					.mapToObj(prime -> String.format("%,d", prime))
-					.collect(Collectors.joining("; "));
-			String queryResult = String.format("Primes between %,d and %,d: %s", queryTracker.rangeMessage.startNumber, queryTracker.rangeMessage.endNumber, primeList);
-
-			// Notify the listener
-			this.listener.tell(new Listener.PrintMessage(queryResult), this.getSelf());
-
 			// Remove the query tracker
 			this.queryId2tracker.remove(queryTracker.id);
 
@@ -438,12 +426,6 @@ public class Master extends AbstractLoggingActor {
 			// We might have some free workers that could process the re-scheduled subquery
 			this.assignSubqueries();
 		}
-
-		// TODO: Why do we initiate a stop when a worker terminated? Since we do not stop the shepherd here, the actor system would not terminate?
-		this.isAcceptingRequests = false;
-		if (!this.hasOpenQueries()) {
-			this.stopSelfAndListener();
-		}
 	}
 
 	/**
@@ -452,6 +434,8 @@ public class Master extends AbstractLoggingActor {
 	private void stopSelfAndListener() {
 		this.log().info("Stopping...");
 		this.getSelf().tell(PoisonPill.getInstance(), this.getSelf());
+		
+		this.listener.tell(new Listener.LogPrimesMessage(), this.getSelf());
 		this.listener.tell(PoisonPill.getInstance(), this.getSelf());
 	}
 }

@@ -6,6 +6,7 @@ import akka.event.Logging;
 import akka.event.LoggingAdapter;
 import de.hpi.akka_tutorial.prime.messages.NumbersMessage;
 
+@Deprecated
 public class PrimeListener extends AbstractActor {
 	
 	public static Props props() {

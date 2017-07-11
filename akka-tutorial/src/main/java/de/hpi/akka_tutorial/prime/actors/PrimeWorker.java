@@ -7,6 +7,7 @@ import akka.event.LoggingAdapter;
 import de.hpi.akka_tutorial.prime.messages.NumbersMessage;
 import de.hpi.akka_tutorial.prime.messages.RangeMessage;
 
+@Deprecated
 public class PrimeWorker extends AbstractActor {
 	
 	public static Props props() {

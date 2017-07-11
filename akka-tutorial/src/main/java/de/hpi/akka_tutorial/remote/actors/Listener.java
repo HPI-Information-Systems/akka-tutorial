@@ -1,6 +1,11 @@
 package de.hpi.akka_tutorial.remote.actors;
 
 import java.io.Serializable;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.Props;
@@ -9,24 +14,47 @@ public class Listener extends AbstractLoggingActor {
 
 	public static final String DEFAULT_NAME = "listener";
 
+	/**
+	 * Create the {@link Props} necessary to instantiate new {@link Listener} actors.
+	 *
+	 * @return the {@link Props}
+	 */
 	public static Props props() {
 		return Props.create(Listener.class);
 	}
 
 	/**
-	 * Asks the listener to print the given message.
+	 * Asks the {@link Listener} to store a given set of primes.
 	 */
-	public static class PrintMessage implements Serializable {
+	public static class PrimesMessage implements Serializable {
 		
 		private static final long serialVersionUID = -1779142448823490939L;
 		
-		private final String message;
+		private final List<Long> primes;
 
-		public PrintMessage(final String message) {
-			this.message = message;
+		public PrimesMessage(final List<Long> primes) {
+			this.primes = primes;
 		}
 	}
+	
+	/**
+	 * Asks the {@link Listener} to log all its primes.
+	 */
+	public static class LogPrimesMessage implements Serializable {
+		
+		private static final long serialVersionUID = -5646268930296638375L;
+	}
 
+	/**
+	 * Asks the {@link Listener} to log its largest prime.
+	 */
+	public static class LogMaxMessage implements Serializable {
+
+		private static final long serialVersionUID = 9210465485942285762L;
+	}
+
+	private final Set<Long> primes = new HashSet<>();
+	
 	@Override
 	public void preStart() throws Exception {
 		super.preStart();
@@ -45,13 +73,30 @@ public class Listener extends AbstractLoggingActor {
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
-				.match(PrintMessage.class, this::handle)
+				.match(PrimesMessage.class, this::handle)
+				.match(LogPrimesMessage.class, this::handle)
+				.match(LogMaxMessage.class, this::handle)
 				.matchAny(object -> this.log().info(this.getClass().getName() + " received unknown message: " + object.toString()))
 				.build();
 	}
 	
-	private void handle(PrintMessage printMessage) {
-		System.out.println(printMessage.message);
+	private void handle(PrimesMessage message) {
+		this.primes.addAll(message.primes);
+	}
+	
+	private void handle(LogPrimesMessage message) {
+		String primeList = this.primes.stream()
+				.mapToLong(Long::longValue)
+				.sorted()
+				.mapToObj(prime -> String.valueOf(prime))
+				.collect(Collectors.joining(";"));
+		this.log().info(String.format("Primes: %s", primeList));		
 	}
 
+	private void handle(LogMaxMessage message) {
+		Long prime = this.primes.stream()
+				.collect(Collectors.maxBy(Comparator.naturalOrder()))
+				.orElseGet(() -> { return 0L; });
+		this.log().info(String.format("Max prime: %d", prime));		
+	}
 }

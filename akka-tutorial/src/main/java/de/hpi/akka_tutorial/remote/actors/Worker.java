@@ -11,12 +11,17 @@ public class Worker extends AbstractLoggingActor {
 
 	private static final int MAX_PRIMES_PER_MESSAGE = 1000;
 
+	/**
+	 * Create the {@link Props} necessary to instantiate new {@link Worker} actors.
+	 *
+	 * @return the {@link Props}
+	 */
 	public static Props props() {
 		return Props.create(Worker.class);
 	}
 
 	/**
-	 * Requests a worker to discover all primes in a given range.
+	 * Asks the {@link Worker} to discover all primes in a given range.
 	 */
 	public static class ValidationMessage implements Serializable {
 		
@@ -68,7 +73,7 @@ public class Worker extends AbstractLoggingActor {
 			if (isPrime(i)) {
 				// We must not send too large messages, hence, also reply with intermediate results as necessary.
 				if (primeBuffer.size() >= MAX_PRIMES_PER_MESSAGE) {
-					// Attention: Never send mutable objects in a message!!!11 Here, we create a copy of our mutable buffer.
+					// Attention: Never send mutable objects in a message!!! Here, we create a copy of our mutable buffer.
 					ArrayList<Long> primeBufferCopy = new ArrayList<>(primeBuffer);
 					this.getSender().tell(new Master.PrimesMessage(message.id, primeBufferCopy, false), this.getSelf());
 					primeBuffer.clear();

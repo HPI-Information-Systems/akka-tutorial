@@ -15,6 +15,7 @@ import akka.routing.Router;
 import de.hpi.akka_tutorial.prime.messages.NumbersMessage;
 import de.hpi.akka_tutorial.prime.messages.RangeMessage;
 
+@Deprecated
 public class PrimeMaster extends AbstractActor {
 	
 	public static Props props(final int numberOfWorkers, final ActorRef listener) {

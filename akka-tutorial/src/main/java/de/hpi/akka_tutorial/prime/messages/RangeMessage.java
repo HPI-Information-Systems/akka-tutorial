@@ -2,6 +2,7 @@ package de.hpi.akka_tutorial.prime.messages;
 
 import java.io.Serializable;
 
+@Deprecated
 public class RangeMessage implements Serializable {
 	
 	private static final long serialVersionUID = -2902027927841444319L;

@@ -14,7 +14,7 @@ public class Reaper extends AbstractLoggingActor {
 	public static final String DEFAULT_NAME = "reaper";
 
 	/**
-	 * Create {@link Props} to create a new reaper actor.
+	 * Create the {@link Props} necessary to instantiate new {@link Reaper} actors.
 	 *
 	 * @return the {@link Props}
 	 */
@@ -23,7 +23,7 @@ public class Reaper extends AbstractLoggingActor {
 	}
 
 	/**
-	 * This message tells the reaper to watch for the termination of the sender.
+	 * Asks the {@link Reaper} to watch for the termination of the sender.
 	 */
 	public static class WatchMeMessage implements Serializable {
 

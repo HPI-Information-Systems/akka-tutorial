@@ -16,6 +16,7 @@ import de.hpi.akka_tutorial.prime.messages.RangeMessage;
 import scala.concurrent.Await;
 import scala.concurrent.duration.Duration;
 
+@Deprecated
 public class PrimeCalculator {
 	
 	public void calculate(long startNumber, long endNumber) {

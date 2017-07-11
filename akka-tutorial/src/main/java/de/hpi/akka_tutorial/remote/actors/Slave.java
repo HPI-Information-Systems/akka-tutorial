@@ -12,10 +12,18 @@ public class Slave extends AbstractLoggingActor {
 
 	public static final String DEFAULT_NAME = "slave";
 
+	/**
+	 * Create the {@link Props} necessary to instantiate new {@link Slave} actors.
+	 *
+	 * @return the {@link Props}
+	 */
 	public static Props props() {
 		return Props.create(Slave.class);
 	}
 
+	/**
+	 * Asks the {@link Slave} to subscribe to a (remote) {@link Shepherd} actor with a given address.
+	 */
 	public static class AddressMessage implements Serializable {
 
 		private static final long serialVersionUID = -4399047760637406556L;
@@ -28,7 +36,7 @@ public class Slave extends AbstractLoggingActor {
 	}
 
 	/**
-	 * This message signals that a connection request with a {@link Shepherd} actor was successful.
+	 * Asks the {@link Slave} to acknowledge a successful connection request with a (remote) {@link Shepherd} actor.
 	 */
 	public static class AcknowledgementMessage implements Serializable {
 
@@ -36,6 +44,9 @@ public class Slave extends AbstractLoggingActor {
 
 	}
 
+	/**
+	 * Asks the {@link Slave} to stop itself.
+	 */
 	public static class ShutdownMessage implements Serializable {
 
 		private static final long serialVersionUID = -8962039849767411379L;
@@ -118,8 +129,8 @@ public class Slave extends AbstractLoggingActor {
 	private void handle(DisassociatedEvent event) {
 		if (this.connectSchedule == null) {
 			// The disassociation is a problem, once we have already connected. Before that, it's no problem, though.
-			log().error("Disassociated from master. Stopping...");
-			getContext().stop(getSelf());
+			this.log().error("Disassociated from master. Stopping...");
+			this.getContext().stop(getSelf());
 		}
 	}
 
