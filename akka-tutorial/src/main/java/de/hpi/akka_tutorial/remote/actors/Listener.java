@@ -10,6 +10,9 @@ import java.util.stream.Collectors;
 import akka.actor.AbstractLoggingActor;
 import akka.actor.Props;
 
+/**
+ * The listener collects prime numbers and responds to action requests on these primes.
+ */
 public class Listener extends AbstractLoggingActor {
 
 	public static final String DEFAULT_NAME = "listener";
@@ -53,6 +56,7 @@ public class Listener extends AbstractLoggingActor {
 		private static final long serialVersionUID = 9210465485942285762L;
 	}
 
+	// The set of all prime numbers received by this listener actor
 	private final Set<Long> primes = new HashSet<>();
 	
 	@Override
@@ -67,7 +71,9 @@ public class Listener extends AbstractLoggingActor {
 	@Override
 	public void postStop() throws Exception {
 		super.postStop();
-		log().info("Stopping {}...", self());
+		
+		// Log the stop event
+		this.log().info("Stopping {}...", this.getSelf());
 	}
 
 	@Override

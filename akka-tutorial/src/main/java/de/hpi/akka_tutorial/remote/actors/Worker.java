@@ -7,6 +7,9 @@ import java.util.List;
 import akka.actor.AbstractLoggingActor;
 import akka.actor.Props;
 
+/**
+ * The worker waits tests ranges of numbers for prime numbers.
+ */
 public class Worker extends AbstractLoggingActor {
 
 	private static final int MAX_PRIMES_PER_MESSAGE = 1000;
@@ -29,18 +32,22 @@ public class Worker extends AbstractLoggingActor {
 		
 		private final int id;
 
-		/**
-		 * The lower (inclusive) and upper (exclusive) range bounds to discover primes in.
-		 */
 		private final long rangeMin, rangeMax;
-
+		
+		/**
+		 * Construct a new {@link ValidationMessage} object.
+		 * 
+		 * @param id the id of the task that this range belongs to
+		 * @param rangeMin first number in the range to be checked as prime (inclusive)
+		 * @param rangeMax last number in the range to be checked as prime (inclusive)
+		 */
 		public ValidationMessage(int id, long rangeMin, long rangeMax) {
 			this.id = id;
 			this.rangeMin = rangeMin;
 			this.rangeMax = rangeMax;
 		}
 	}
-
+	
 	@Override
 	public void preStart() throws Exception {
 		super.preStart();
@@ -52,7 +59,9 @@ public class Worker extends AbstractLoggingActor {
 	@Override
 	public void postStop() throws Exception {
 		super.postStop();
-		log().info("Stopping {}...", self());
+		
+		// Log the stop event
+		this.log().info("Stopping {}...", this.getSelf());
 	}
 
 	@Override
@@ -65,24 +74,33 @@ public class Worker extends AbstractLoggingActor {
 
 	private void handle(ValidationMessage message) {
 		
-		this.log().info("Discovering primes p ({} <= p <= {})...", message.rangeMin, message.rangeMax);
+		// Log that we started processing the current task
+		this.log().info("Started discovering primes in [{},{}] ...", message.rangeMin, message.rangeMax);
 
-		// Iterate over the range of numbers, compute the primes, and return the list of numbers that are prime
+		// Iterate over the range of numbers and compute the primes
 		List<Long> primeBuffer = new ArrayList<>(MAX_PRIMES_PER_MESSAGE);
-		for (long i = message.rangeMin; i < message.rangeMax; i++) {
+		for (long i = message.rangeMin; i <= message.rangeMax; i++) {
 			if (isPrime(i)) {
-				// We must not send too large messages, hence, also reply with intermediate results as necessary.
+				
+				// Check the buffer size: We must not send too large messages, hence, also reply with intermediate results as necessary
 				if (primeBuffer.size() >= MAX_PRIMES_PER_MESSAGE) {
-					// Attention: Never send mutable objects in a message!!! Here, we create a copy of our mutable buffer.
+					
+					// Create a copy of the elements in the buffer before sending them; never send mutable objects in a message!!!
 					ArrayList<Long> primeBufferCopy = new ArrayList<>(primeBuffer);
+					
+					// Send the intermediate results to the master actor
 					this.getSender().tell(new Master.PrimesMessage(message.id, primeBufferCopy, false), this.getSelf());
+					
+					// Clear the buffer
 					primeBuffer.clear();
 				}
+				
+				// Add the computed prime to the buffer
 				primeBuffer.add(i);
 			}
 		}
 
-		// Send the primes back.
+		// Send the primes to the master actor
 		this.getSender().tell(new Master.PrimesMessage(message.id, primeBuffer, true), this.getSelf());
 
 		// Asynchronous version: Consider using a dedicated executor service.

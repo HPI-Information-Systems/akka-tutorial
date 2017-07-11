@@ -31,14 +31,9 @@ public class Reaper extends AbstractLoggingActor {
 	}
 
 	/**
-	 * Keep track of the actors to be reaped eventually.
-	 */
-	private final Set<ActorRef> watchees = new HashSet<>();
-
-	/**
-	 * Haves the given {@link AbstractActor} being watched with the default reaper in the local {@link ActorSystem}.
+	 * Find the reaper actor of this actor system and let it watch the given actor.
 	 *
-	 * @param actor to be watched
+	 * @param actor the actor to be watched
 	 * @see #DEFAULT_NAME the name of the default reaper
 	 */
 	public static void watchWithDefaultReaper(AbstractActor actor) {
@@ -46,10 +41,23 @@ public class Reaper extends AbstractLoggingActor {
 		defaultReaper.tell(new WatchMeMessage(), actor.getSelf());
 	}
 
+	// A reference to all actors whose life is watched by this reaper
+	private final Set<ActorRef> watchees = new HashSet<>();
+
 	@Override
 	public void preStart() throws Exception {
 		super.preStart();
+		
+		// Log the start event
 		log().info("Started {}...", getSelf());
+	}
+	
+	@Override
+	public void postStop() throws Exception {
+		super.postStop();
+		
+		// Log the stop event
+		this.log().info("Stopping {}...", this.getSelf());
 	}
 
 	@Override
@@ -61,35 +69,32 @@ public class Reaper extends AbstractLoggingActor {
 				.build();
 	}
 
-	/**
-	 * Process a {@link WatchMeMessage}.
-	 *
-	 * @param msg the message
-	 */
-	private void handle(WatchMeMessage msg) {
-		ActorRef sender = getSender();
+	private void handle(WatchMeMessage message) {
+		
+		// Find the sender of this message
+		final ActorRef sender = this.getSender();
+		
+		// Watch the sender if it is not already on the watch list
 		if (this.watchees.add(sender)) {
 			this.getContext().watch(sender);
 			this.log().info("Start watching {}...", sender);
 		}
 	}
 
-	/**
-	 * Process a {@link Terminated} message.
-	 *
-	 * @param msg the message
-	 */
-	private void handle(Terminated msg) {
-		ActorRef actor = msg.getActor();
-		if (this.watchees.remove(actor)) {
-			this.log().info("Reaping {}.", actor);
+	private void handle(Terminated message) {
+		
+		// Find the sender of this message
+		final ActorRef sender = this.getSender();
+		
+		// Remove the sender from the watch list reaping its soul and terminate the entire actor system if this was its last actor
+		if (this.watchees.remove(sender)) {
+			this.log().info("Reaping {}.", sender);
 			if (this.watchees.isEmpty()) {
-				this.log().info("Everyone has been reaped. Terminating the actor system...");
+				this.log().info("Every local actor has been reaped. Terminating the actor system...");
 				this.getContext().getSystem().terminate();
 			}
 		} else {
-			this.log().error("Got termination message from unwatched {}.", actor);
+			this.log().error("Got termination message from unwatched {}.", sender);
 		}
 	}
-
 }

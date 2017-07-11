@@ -8,6 +8,9 @@ import scala.concurrent.duration.Duration;
 import java.io.Serializable;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * The slave actor tries to subscribe its actor system to a shepherd actor in a master actor system.
+ */
 public class Slave extends AbstractLoggingActor {
 
 	public static final String DEFAULT_NAME = "slave";
@@ -52,11 +55,9 @@ public class Slave extends AbstractLoggingActor {
 		private static final long serialVersionUID = -8962039849767411379L;
 	}
 
-	/**
-	 * Scheduling item to keep on trying to reconnect as regularly.
-	 */
+	// A scheduling item to keep on trying to reconnect as regularly
 	private Cancellable connectSchedule;
-
+	
 	@Override
 	public void preStart() throws Exception {
 		super.preStart();
@@ -65,14 +66,15 @@ public class Slave extends AbstractLoggingActor {
 		Reaper.watchWithDefaultReaper(this);
 
 		// Listen for disassociation with the master
-		this.getContext().getSystem().eventStream().subscribe(getSelf(), DisassociatedEvent.class);
+		this.getContext().getSystem().eventStream().subscribe(this.getSelf(), DisassociatedEvent.class);
 	}
-
 
 	@Override
 	public void postStop() throws Exception {
 		super.postStop();
-		log().info("Stopping {}...", self());
+		
+		// Log the stop event
+		this.log().info("Stopping {}...", this.getSelf());
 	}
 
 	@Override
@@ -89,24 +91,24 @@ public class Slave extends AbstractLoggingActor {
 	private void handle(ShutdownMessage message) {
 
 		// Log remote shutdown message
-		this.log().info("Asked to stop.");
+		this.log().info("Was asked to stop.");
 
-		// Shutdown this system
+		// Stop self by sending a poison pill
 		this.getSelf().tell(PoisonPill.getInstance(), this.getSelf());
 	}
 
 	private void handle(AddressMessage message) {
 		
-		// Cancel any running connect schedule
+		// Cancel any running connect schedule, because got a new address
 		if (this.connectSchedule != null) {
 			this.connectSchedule.cancel();
 			this.connectSchedule = null;
 		}
 
-		// Find the shepherd actor in the remote ActorSystem
+		// Find the shepherd actor in the remote actor system
 		final ActorSelection selection = this.getContext().system().actorSelection(String.format("%s/user/%s", message.address, Shepherd.DEFAULT_NAME));
 
-		// Register the local ActorSystem by periodically sending subscription messages (until an acknowledgement was received)
+		// Register the local actor system by periodically sending subscription messages (until an acknowledgement was received)
 		final Scheduler scheduler = this.getContext().getSystem().scheduler();
 		final ExecutionContextExecutor dispatcher = this.getContext().getSystem().dispatcher();
 		this.connectSchedule = scheduler.schedule(
@@ -118,17 +120,21 @@ public class Slave extends AbstractLoggingActor {
 	}
 
 	private void handle(AcknowledgementMessage message) {
+		
+		// Cancel any running connect schedule, because we are now connected
 		if (this.connectSchedule != null) {
 			this.connectSchedule.cancel();
 			this.connectSchedule = null;
 		}
 
-		this.log().info("Successfully acknowledged by {}.", getSender());
+		// Log the connection success
+		this.log().info("Subscription successfully acknowledged by {}.", this.getSender());
 	}
 
 	private void handle(DisassociatedEvent event) {
+		
+		// Disassociations are a problem only once we have a running connection, i.e., no connection schedule is active; they do not concern this actor otherwise.
 		if (this.connectSchedule == null) {
-			// The disassociation is a problem, once we have already connected. Before that, it's no problem, though.
 			this.log().error("Disassociated from master. Stopping...");
 			this.getContext().stop(getSelf());
 		}
