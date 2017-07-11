@@ -19,6 +19,7 @@ import akka.actor.Terminated;
 import akka.japi.pf.DeciderBuilder;
 import akka.remote.RemoteScope;
 import de.hpi.akka_tutorial.remote.actors.scheduling.LoadAwareSchedulingStrategy;
+import de.hpi.akka_tutorial.remote.actors.scheduling.RoundRobinSchedulingStrategy;
 import de.hpi.akka_tutorial.remote.actors.scheduling.SchedulingStrategy;
 import scala.concurrent.duration.Duration;
 
@@ -126,6 +127,7 @@ public class Master extends AbstractLoggingActor {
 	
 	// The scheduling strategy that splits range messages into smaller tasks and distributes these to the workers
 	private final SchedulingStrategy schedulingStrategy = new LoadAwareSchedulingStrategy(this.getSelf());
+//	private final SchedulingStrategy schedulingStrategy = new RoundRobinSchedulingStrategy(this.getSelf());
 
 	// A helper variable to assign unique IDs to each range query
 	private int nextQueryId = 0;
@@ -248,7 +250,6 @@ public class Master extends AbstractLoggingActor {
 		}
 	}
 
-	
 	private void handle(Terminated message) {
 		
 		// Find the sender of this message

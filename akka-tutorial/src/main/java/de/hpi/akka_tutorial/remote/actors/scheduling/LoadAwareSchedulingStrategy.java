@@ -132,7 +132,7 @@ public class LoadAwareSchedulingStrategy implements SchedulingStrategy {
 	}
 	
 	@Override
-	public void finished(int taskId, ActorRef worker) {
+	public void finished(final int taskId, final ActorRef worker) {
 		
 		// Find the query being processed
 		QueryTracker queryTracker = this.queryId2tracker.get(taskId);
