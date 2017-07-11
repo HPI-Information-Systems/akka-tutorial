@@ -182,16 +182,19 @@ public class LoadAwareSchedulingStrategy implements SchedulingStrategy {
 		Iterator<QueryTracker> queryTrackerIterator = this.queryId2tracker.values().iterator();
 
 		// Check if there is any on-going query at the moment
-		if (!queryTrackerIterator.hasNext()) return;
+		if (!queryTrackerIterator.hasNext()) 
+			return;
 		QueryTracker nextQueryTracker = queryTrackerIterator.next();
 
 		// Assign all idle workers as long as there is work to do
 		for (ActorRef idleWorker : idleWorkers) {
+			
 			// Poll the next subquery from the current query tracker
 			Worker.ValidationMessage subquery;
 			if ((subquery = nextQueryTracker.pollNextSubquery(idleWorker)) == null) {
 				// If the current query tracker does not have open work items, go to the next one
-				if (!queryTrackerIterator.hasNext()) return;
+				if (!queryTrackerIterator.hasNext()) 
+					return;
 				nextQueryTracker = queryTrackerIterator.next();
 			}
 
