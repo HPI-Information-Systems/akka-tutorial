@@ -1,12 +1,18 @@
 package de.hpi.akka_tutorial.remote.actors;
 
-import akka.actor.*;
+import java.io.Serializable;
+import java.util.concurrent.TimeUnit;
+
+import akka.actor.AbstractLoggingActor;
+import akka.actor.ActorSelection;
+import akka.actor.Address;
+import akka.actor.Cancellable;
+import akka.actor.PoisonPill;
+import akka.actor.Props;
+import akka.actor.Scheduler;
 import akka.remote.DisassociatedEvent;
 import scala.concurrent.ExecutionContextExecutor;
 import scala.concurrent.duration.Duration;
-
-import java.io.Serializable;
-import java.util.concurrent.TimeUnit;
 
 /**
  * The slave actor tries to subscribe its actor system to a shepherd actor in a master actor system.
@@ -31,10 +37,17 @@ public class Slave extends AbstractLoggingActor {
 
 		private static final long serialVersionUID = -4399047760637406556L;
 
-		private final Address address;
+		private Address address;
 
-		public AddressMessage(Address address) {
+		public AddressMessage(final Address address) {
 			this.address = address;
+		}
+		
+		/**
+		 * For serialization/deserialization only.
+		 */
+		@SuppressWarnings("unused")
+		private AddressMessage() {
 		}
 	}
 
@@ -74,7 +87,7 @@ public class Slave extends AbstractLoggingActor {
 		super.postStop();
 		
 		// Log the stop event
-		this.log().info("Stopping {}...", this.getSelf());
+		this.log().info("Stopped {}.", this.getSelf());
 	}
 
 	@Override

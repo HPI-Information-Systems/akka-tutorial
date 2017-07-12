@@ -1,18 +1,23 @@
 package de.hpi.akka_tutorial.remote;
 
+import java.util.Scanner;
+import java.util.concurrent.TimeoutException;
+
+import com.typesafe.config.Config;
+
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.actor.Address;
 import akka.actor.PoisonPill;
-import com.typesafe.config.Config;
-import de.hpi.akka_tutorial.remote.actors.*;
 import de.hpi.akka_tutorial.remote.actors.scheduling.SchedulingStrategy;
+import de.hpi.akka_tutorial.remote.actors.Listener;
+import de.hpi.akka_tutorial.remote.actors.Master;
+import de.hpi.akka_tutorial.remote.actors.Reaper;
+import de.hpi.akka_tutorial.remote.actors.Shepherd;
+import de.hpi.akka_tutorial.remote.actors.Slave;
 import de.hpi.akka_tutorial.util.AkkaUtils;
 import scala.concurrent.Await;
 import scala.concurrent.duration.Duration;
-
-import java.util.Scanner;
-import java.util.concurrent.TimeoutException;
 
 public class Calculator {
 
@@ -41,11 +46,17 @@ public class Calculator {
 		final Scanner scanner = new Scanner(System.in);
 		while (true) {
 			try {
+				// Sleep to reduce mixing of log messages with the regular stdout messages.
+				try {
+					Thread.sleep(1000);
+				} catch (InterruptedException e) {
+				}
+				
 				// Read input
-				System.out.printf("Enter a range \"<min>,<max>\" to analyze for primes, "
-						+ "the command \"all\" to log all calculated prime, "
-						+ "the command \"max\" to log the largest calculated prime, "
-						+ "or any non-range command for shutdown: ");
+				System.out.println("> Enter \"<min>,<max>\" to analyze for primes, "
+						+ "\"all\" to log all calculated primes, "
+						+ "\"max\" to log the largest calculated prime, "
+						+ "\"exit\" for shutdown: ");
 				String line = scanner.nextLine();
 
 				// Check for "all" command
@@ -79,12 +90,6 @@ public class Calculator {
 				// Print and exit
 				e.printStackTrace();
 				System.exit(-1);
-			}
-
-			// Sleep to reduce mixing of log messages with the regular stdout messages.
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e) {
 			}
 		}
 		scanner.close();

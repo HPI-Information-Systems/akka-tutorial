@@ -4,7 +4,11 @@ import java.io.Serializable;
 import java.util.HashSet;
 import java.util.Set;
 
-import akka.actor.*;
+import akka.actor.AbstractLoggingActor;
+import akka.actor.ActorRef;
+import akka.actor.Address;
+import akka.actor.Props;
+import akka.actor.Terminated;
 
 /**
  * The shepherd lives in the master actor system and waits for slave subscriptions.
@@ -62,7 +66,7 @@ public class Shepherd extends AbstractLoggingActor {
 			slave.tell(new Slave.ShutdownMessage(), this.getSelf());
 
 		// Log the stop event
-		this.log().info("Stopping {}...", this.getSelf());
+		this.log().info("Stopped {}.", this.getSelf());
 	}
 
 	@Override

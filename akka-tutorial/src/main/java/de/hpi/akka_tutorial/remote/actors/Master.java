@@ -79,11 +79,11 @@ public class Master extends AbstractLoggingActor {
 
 		private static final long serialVersionUID = 4862570515887001983L;
 
-		private final int requestId;
+		private int requestId;
 
-		private final List<Long> primes;
+		private List<Long> primes;
 
-		private final boolean isComplete;
+		private boolean isComplete;
 
 		/**
 		 * Create a new instance.
@@ -92,10 +92,17 @@ public class Master extends AbstractLoggingActor {
 		 * @param primes     some discovered primes
 		 * @param isComplete whether all primes of the current subquery have been discovered
 		 */
-		public PrimesMessage(final int requestId, final List<Long> primes, boolean isComplete) {
+		public PrimesMessage(final int requestId, final List<Long> primes, final boolean isComplete) {
 			this.requestId = requestId;
 			this.primes = primes;
 			this.isComplete = isComplete;
+		}
+		
+		/**
+		 * For serialization/deserialization only.
+		 */
+		@SuppressWarnings("unused")
+		private PrimesMessage() {
 		}
 	}
 
@@ -106,10 +113,17 @@ public class Master extends AbstractLoggingActor {
 
 		private static final long serialVersionUID = 2786272840353304769L;
 
-		private final Address remoteAddress;
+		private Address remoteAddress;
 
-		public RemoteSystemMessage(Address remoteAddress) {
+		public RemoteSystemMessage(final Address remoteAddress) {
 			this.remoteAddress = remoteAddress;
+		}
+		
+		/**
+		 * For serialization/deserialization only.
+		 */
+		@SuppressWarnings("unused")
+		private RemoteSystemMessage() {
 		}
 	}
 
@@ -171,7 +185,7 @@ public class Master extends AbstractLoggingActor {
 		super.postStop();
 		
 		// Log the stop event
-		this.log().info("Stopping {}...", this.getSelf());
+		this.log().info("Stopped {}.", this.getSelf());
 	}
 
 	@Override
@@ -263,8 +277,7 @@ public class Master extends AbstractLoggingActor {
 	
 	private void stopSelfAndListener() {
 		
-		// Tell the listener to log all primes that we discovered and then let it stop
-		this.listener.tell(new Listener.LogPrimesMessage(), this.getSelf());
+		// Tell the listener to stop
 		this.listener.tell(PoisonPill.getInstance(), this.getSelf());
 		
 		// Stop self by sending a poison pill

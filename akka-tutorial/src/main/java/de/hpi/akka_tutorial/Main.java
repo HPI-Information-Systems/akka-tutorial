@@ -1,5 +1,8 @@
 package de.hpi.akka_tutorial;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
 import com.beust.jcommander.ParameterException;
@@ -8,9 +11,6 @@ import de.hpi.akka_tutorial.remote.Calculator;
 import de.hpi.akka_tutorial.remote.actors.scheduling.ReactiveSchedulingStrategy;
 import de.hpi.akka_tutorial.remote.actors.scheduling.RoundRobinSchedulingStrategy;
 import de.hpi.akka_tutorial.remote.actors.scheduling.SchedulingStrategy;
-
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 
 public class Main {
 
