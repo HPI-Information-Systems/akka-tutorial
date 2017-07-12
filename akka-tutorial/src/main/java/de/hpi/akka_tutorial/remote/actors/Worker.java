@@ -30,9 +30,9 @@ public class Worker extends AbstractLoggingActor {
 		
 		private static final long serialVersionUID = -7467053227355130231L;
 		
-		private final int id;
+		private int id;
 
-		private final long rangeMin, rangeMax;
+		private long rangeMin, rangeMax;
 		
 		/**
 		 * Construct a new {@link ValidationMessage} object.
@@ -45,6 +45,13 @@ public class Worker extends AbstractLoggingActor {
 			this.id = id;
 			this.rangeMin = rangeMin;
 			this.rangeMax = rangeMax;
+		}
+		
+		/**
+		 * For serialization/deserialization only.
+		 */
+		@SuppressWarnings("unused")
+		private ValidationMessage() {
 		}
 	}
 	

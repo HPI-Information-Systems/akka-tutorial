@@ -31,10 +31,17 @@ public class Slave extends AbstractLoggingActor {
 
 		private static final long serialVersionUID = -4399047760637406556L;
 
-		private final Address address;
+		private Address address;
 
-		public AddressMessage(Address address) {
+		public AddressMessage(final Address address) {
 			this.address = address;
+		}
+		
+		/**
+		 * For serialization/deserialization only.
+		 */
+		@SuppressWarnings("unused")
+		private AddressMessage() {
 		}
 	}
 

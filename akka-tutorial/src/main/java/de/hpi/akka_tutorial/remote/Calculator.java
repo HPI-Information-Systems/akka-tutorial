@@ -40,11 +40,17 @@ public class Calculator {
 		final Scanner scanner = new Scanner(System.in);
 		while (true) {
 			try {
+				// Sleep to reduce mixing of log messages with the regular stdout messages.
+				try {
+					Thread.sleep(1000);
+				} catch (InterruptedException e) {
+				}
+				
 				// Read input
-				System.out.printf("Enter a range \"<min>,<max>\" to analyze for primes, "
-						+ "the command \"all\" to log all calculated prime, "
-						+ "the command \"max\" to log the largest calculated prime, "
-						+ "or any non-range command for shutdown: ");
+				System.out.println("Enter \"<min>,<max>\" to analyze for primes, "
+						+ "\"all\" to log all calculated primes, "
+						+ "\"max\" to log the largest calculated prime, "
+						+ "\"exit\" for shutdown: ");
 				String line = scanner.nextLine();
 
 				// Check for "all" command
@@ -78,12 +84,6 @@ public class Calculator {
 				// Print and exit
 				e.printStackTrace();
 				System.exit(-1);
-			}
-
-			// Sleep to reduce mixing of log messages with the regular stdout messages.
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e) {
 			}
 		}
 		scanner.close();

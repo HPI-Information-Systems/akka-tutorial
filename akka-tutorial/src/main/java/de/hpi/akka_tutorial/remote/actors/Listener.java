@@ -33,10 +33,17 @@ public class Listener extends AbstractLoggingActor {
 		
 		private static final long serialVersionUID = -1779142448823490939L;
 		
-		private final List<Long> primes;
+		private List<Long> primes;
 
 		public PrimesMessage(final List<Long> primes) {
 			this.primes = primes;
+		}
+		
+		/**
+		 * For serialization/deserialization only.
+		 */
+		@SuppressWarnings("unused")
+		private PrimesMessage() {
 		}
 	}
 	
