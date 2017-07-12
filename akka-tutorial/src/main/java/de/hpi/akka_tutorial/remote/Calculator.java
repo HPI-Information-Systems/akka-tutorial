@@ -1,17 +1,22 @@
 package de.hpi.akka_tutorial.remote;
 
+import java.util.Scanner;
+import java.util.concurrent.TimeoutException;
+
+import com.typesafe.config.Config;
+
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.actor.Address;
 import akka.actor.PoisonPill;
-import com.typesafe.config.Config;
-import de.hpi.akka_tutorial.remote.actors.*;
+import de.hpi.akka_tutorial.remote.actors.Listener;
+import de.hpi.akka_tutorial.remote.actors.Master;
+import de.hpi.akka_tutorial.remote.actors.Reaper;
+import de.hpi.akka_tutorial.remote.actors.Shepherd;
+import de.hpi.akka_tutorial.remote.actors.Slave;
 import de.hpi.akka_tutorial.util.AkkaUtils;
 import scala.concurrent.Await;
 import scala.concurrent.duration.Duration;
-
-import java.util.Scanner;
-import java.util.concurrent.TimeoutException;
 
 public class Calculator {
 

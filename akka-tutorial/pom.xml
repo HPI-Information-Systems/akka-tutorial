@@ -46,11 +46,16 @@
 			<version>2.5.3</version>
 		</dependency>
 		<dependency>
+			<groupId>com.typesafe.akka</groupId>
+			<artifactId>akka-testkit_${scala.version}</artifactId>
+			<version>2.5.3</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
 			<groupId>com.twitter</groupId>
 			<artifactId>chill-akka_${scala.version}</artifactId>
 			<version>0.9.2</version>
 		</dependency>
-
 		<dependency>
 			<groupId>ch.qos.logback</groupId>
 			<artifactId>logback-classic</artifactId>
@@ -61,7 +66,6 @@
 			<artifactId>logback-core</artifactId>
 			<version>1.2.3</version>
 		</dependency>
-
 		<dependency>
 			<groupId>com.beust</groupId>
 			<artifactId>jcommander</artifactId>
@@ -70,7 +74,7 @@
 		<dependency>
 			<groupId>junit</groupId>
 			<artifactId>junit</artifactId>
-			<version>3.8.1</version>
+			<version>4.12</version>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
