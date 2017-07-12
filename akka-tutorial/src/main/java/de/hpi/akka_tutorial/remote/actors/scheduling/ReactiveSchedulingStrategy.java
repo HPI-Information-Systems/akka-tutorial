@@ -6,7 +6,19 @@ import de.hpi.akka_tutorial.remote.actors.Worker;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class LoadAwareSchedulingStrategy implements SchedulingStrategy {
+public class ReactiveSchedulingStrategy implements SchedulingStrategy {
+
+	/**
+	 * {@link SchedulingStrategy.Factory} implementation for the {@link ReactiveSchedulingStrategy}.
+	 */
+	public static class Factory implements SchedulingStrategy.Factory {
+
+		@Override
+		public ReactiveSchedulingStrategy create(ActorRef master) {
+			return new ReactiveSchedulingStrategy(master);
+		}
+
+	}
 
 	/**
 	 * This class supervises the state of a range query for primes.
@@ -105,7 +117,7 @@ public class LoadAwareSchedulingStrategy implements SchedulingStrategy {
 	// A reference to the actor in whose name we send messages
 	private final ActorRef master;
 
-	public LoadAwareSchedulingStrategy(ActorRef master) {
+	public ReactiveSchedulingStrategy(ActorRef master) {
 		this.master = master;
 	}
 

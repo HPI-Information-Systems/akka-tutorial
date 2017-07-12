@@ -18,8 +18,6 @@ import akka.actor.SupervisorStrategy;
 import akka.actor.Terminated;
 import akka.japi.pf.DeciderBuilder;
 import akka.remote.RemoteScope;
-import de.hpi.akka_tutorial.remote.actors.scheduling.LoadAwareSchedulingStrategy;
-import de.hpi.akka_tutorial.remote.actors.scheduling.RoundRobinSchedulingStrategy;
 import de.hpi.akka_tutorial.remote.actors.scheduling.SchedulingStrategy;
 import scala.concurrent.duration.Duration;
 
@@ -35,8 +33,8 @@ public class Master extends AbstractLoggingActor {
 	 *
 	 * @return the {@link Props}
 	 */
-	public static Props props(final ActorRef listener, final int numLocalWorkers) {
-		return Props.create(Master.class, () -> new Master(listener, numLocalWorkers));
+	public static Props props(final ActorRef listener, SchedulingStrategy.Factory schedulingStrategyFactory, final int numLocalWorkers) {
+		return Props.create(Master.class, () -> new Master(listener, schedulingStrategyFactory, numLocalWorkers));
 	}
 
 	/**
@@ -126,8 +124,7 @@ public class Master extends AbstractLoggingActor {
 	private final ActorRef listener;
 	
 	// The scheduling strategy that splits range messages into smaller tasks and distributes these to the workers
-	private final SchedulingStrategy schedulingStrategy = new LoadAwareSchedulingStrategy(this.getSelf());
-//	private final SchedulingStrategy schedulingStrategy = new RoundRobinSchedulingStrategy(this.getSelf());
+	private final SchedulingStrategy schedulingStrategy;
 
 	// A helper variable to assign unique IDs to each range query
 	private int nextQueryId = 0;
@@ -137,14 +134,17 @@ public class Master extends AbstractLoggingActor {
 
 	/**
 	 * Construct a new {@link Master} object.
-	 * 
 	 * @param listener a reference to an {@link Listener} actor to send results to
+	 * @param schedulingStrategyFactory defines which {@link SchedulingStrategy} to use
 	 * @param numLocalWorkers number of workers that this master should start locally
 	 */
-	public Master(final ActorRef listener, int numLocalWorkers) {
+	public Master(final ActorRef listener, SchedulingStrategy.Factory schedulingStrategyFactory, int numLocalWorkers) {
 		
 		// Save the reference to the Listener actor
 		this.listener = listener;
+
+		// Create a scheduling strategy.
+		this.schedulingStrategy = schedulingStrategyFactory.create(this.getSelf());
 		
 		// Start the specified number of local workers
 		for (int i = 0; i < numLocalWorkers; i++) {

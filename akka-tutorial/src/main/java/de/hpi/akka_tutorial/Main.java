@@ -5,6 +5,9 @@ import com.beust.jcommander.Parameter;
 import com.beust.jcommander.ParameterException;
 import com.beust.jcommander.Parameters;
 import de.hpi.akka_tutorial.remote.Calculator;
+import de.hpi.akka_tutorial.remote.actors.scheduling.ReactiveSchedulingStrategy;
+import de.hpi.akka_tutorial.remote.actors.scheduling.RoundRobinSchedulingStrategy;
+import de.hpi.akka_tutorial.remote.actors.scheduling.SchedulingStrategy;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -58,8 +61,19 @@ public class Main {
      *
      * @param masterCommand defines the parameters of the master
      */
-    private static void startMaster(MasterCommand masterCommand) {
-        Calculator.runMaster(masterCommand.host, masterCommand.port, masterCommand.numLocalWorkers);
+    private static void startMaster(MasterCommand masterCommand) throws ParameterException {
+        SchedulingStrategy.Factory schedulingStrategyFactory;
+        switch (masterCommand.schedulingStrategy) {
+            case "round-robin":
+                schedulingStrategyFactory = new RoundRobinSchedulingStrategy.Factory();
+                break;
+            case "reactive":
+                schedulingStrategyFactory = new ReactiveSchedulingStrategy.Factory();
+                break;
+            default:
+                throw new ParameterException(String.format("Unknown scheduling strategy: %s", masterCommand.schedulingStrategy));
+        }
+        Calculator.runMaster(masterCommand.host, masterCommand.port, schedulingStrategyFactory, masterCommand.numLocalWorkers);
     }
 
     /**
@@ -89,6 +103,12 @@ public class Main {
          */
         @Parameter(names = {"-w", "--workers"}, description = "number of workers to start locally")
         int numLocalWorkers = 0;
+
+        /**
+         * Defines the scheduling strategy to be used in the master.
+         */
+        @Parameter(names = {"-s", "--scheduler"}, description = "a scheduling strategy (round-robin or reactive)")
+        String schedulingStrategy = "round-robin";
     }
 
     /**

@@ -6,6 +6,7 @@ import akka.actor.Address;
 import akka.actor.PoisonPill;
 import com.typesafe.config.Config;
 import de.hpi.akka_tutorial.remote.actors.*;
+import de.hpi.akka_tutorial.remote.actors.scheduling.SchedulingStrategy;
 import de.hpi.akka_tutorial.util.AkkaUtils;
 import scala.concurrent.Await;
 import scala.concurrent.duration.Duration;
@@ -18,7 +19,7 @@ public class Calculator {
 	private static final String DEFAULT_MASTER_SYSTEM_NAME = "MasterActorSystem";
 	private static final String DEFAULT_SLAVE_SYSTEM_NAME = "SlaveActorSystem";
 
-	public static void runMaster(String host, int port, int numLocalWorkers) {
+	public static void runMaster(String host, int port, SchedulingStrategy.Factory schedulingStrategyFactory, int numLocalWorkers) {
 		
 		// Create the ActorSystem
 		final Config config = AkkaUtils.createRemoteAkkaConfig(host, port);
@@ -31,7 +32,7 @@ public class Calculator {
 		final ActorRef listener = actorSystem.actorOf(Listener.props(), Listener.DEFAULT_NAME);
 
 		// Create the Master
-		final ActorRef master = actorSystem.actorOf(Master.props(listener, numLocalWorkers), Master.DEFAULT_NAME);
+		final ActorRef master = actorSystem.actorOf(Master.props(listener, schedulingStrategyFactory, numLocalWorkers), Master.DEFAULT_NAME);
 
 		// Create the Shepherd
 		final ActorRef shepherd = actorSystem.actorOf(Shepherd.props(master), Shepherd.DEFAULT_NAME);

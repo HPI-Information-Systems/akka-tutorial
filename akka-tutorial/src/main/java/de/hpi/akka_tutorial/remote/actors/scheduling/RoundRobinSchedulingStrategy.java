@@ -10,6 +10,18 @@ import de.hpi.akka_tutorial.remote.actors.Worker;
 
 public class RoundRobinSchedulingStrategy implements SchedulingStrategy {
 
+	/**
+	 * {@link SchedulingStrategy.Factory} implementation for the {@link RoundRobinSchedulingStrategy}.
+	 */
+	public static class Factory implements SchedulingStrategy.Factory {
+
+		@Override
+		public SchedulingStrategy create(ActorRef master) {
+			return new RoundRobinSchedulingStrategy(master);
+		}
+
+	}
+
 	// A round robin router for our workers
 	private Router workerRouter = new Router(new RoundRobinRoutingLogic());
 
