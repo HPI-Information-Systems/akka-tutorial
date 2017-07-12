@@ -5,6 +5,7 @@ import static akka.actor.SupervisorStrategy.stop;
 
 import java.io.Serializable;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 import akka.actor.AbstractLoggingActor;
@@ -103,6 +104,21 @@ public class Master extends AbstractLoggingActor {
 		 */
 		@SuppressWarnings("unused")
 		private PrimesMessage() {
+		}
+
+		@Override
+		public boolean equals(Object o) {
+			if (this == o) return true;
+			if (o == null || getClass() != o.getClass()) return false;
+			final PrimesMessage that = (PrimesMessage) o;
+			return requestId == that.requestId &&
+					isComplete == that.isComplete &&
+					Objects.equals(primes, that.primes);
+		}
+
+		@Override
+		public int hashCode() {
+			return Objects.hash(requestId, primes, isComplete);
 		}
 	}
 
