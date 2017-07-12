@@ -49,7 +49,7 @@ public class Reaper extends AbstractLoggingActor {
 		super.preStart();
 		
 		// Log the start event
-		log().info("Started {}...", getSelf());
+		log().info("Started {}...", this.getSelf());
 	}
 	
 	@Override
@@ -57,7 +57,7 @@ public class Reaper extends AbstractLoggingActor {
 		super.postStop();
 		
 		// Log the stop event
-		this.log().info("Stopping {}...", this.getSelf());
+		this.log().info("Stopped {}.", this.getSelf());
 	}
 
 	@Override
@@ -77,7 +77,7 @@ public class Reaper extends AbstractLoggingActor {
 		// Watch the sender if it is not already on the watch list
 		if (this.watchees.add(sender)) {
 			this.getContext().watch(sender);
-			this.log().info("Start watching {}...", sender);
+			this.log().info("Started watching {}.", sender);
 		}
 	}
 

@@ -62,7 +62,7 @@ public class Shepherd extends AbstractLoggingActor {
 			slave.tell(new Slave.ShutdownMessage(), this.getSelf());
 
 		// Log the stop event
-		this.log().info("Stopping {}...", this.getSelf());
+		this.log().info("Stopped {}.", this.getSelf());
 	}
 
 	@Override

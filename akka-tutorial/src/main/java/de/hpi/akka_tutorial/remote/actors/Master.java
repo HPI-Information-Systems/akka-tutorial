@@ -184,7 +184,7 @@ public class Master extends AbstractLoggingActor {
 		super.postStop();
 		
 		// Log the stop event
-		this.log().info("Stopping {}...", this.getSelf());
+		this.log().info("Stopped {}.", this.getSelf());
 	}
 
 	@Override
@@ -276,8 +276,7 @@ public class Master extends AbstractLoggingActor {
 	
 	private void stopSelfAndListener() {
 		
-		// Tell the listener to log all primes that we discovered and then let it stop
-		this.listener.tell(new Listener.LogPrimesMessage(), this.getSelf());
+		// Tell the listener to stop
 		this.listener.tell(PoisonPill.getInstance(), this.getSelf());
 		
 		// Stop self by sending a poison pill

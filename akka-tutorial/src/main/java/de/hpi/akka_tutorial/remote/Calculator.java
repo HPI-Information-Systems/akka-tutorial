@@ -47,7 +47,7 @@ public class Calculator {
 				}
 				
 				// Read input
-				System.out.println("Enter \"<min>,<max>\" to analyze for primes, "
+				System.out.println("> Enter \"<min>,<max>\" to analyze for primes, "
 						+ "\"all\" to log all calculated primes, "
 						+ "\"max\" to log the largest calculated prime, "
 						+ "\"exit\" for shutdown: ");

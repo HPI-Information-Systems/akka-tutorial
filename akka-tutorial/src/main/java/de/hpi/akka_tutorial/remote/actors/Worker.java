@@ -68,7 +68,7 @@ public class Worker extends AbstractLoggingActor {
 		super.postStop();
 		
 		// Log the stop event
-		this.log().info("Stopping {}...", this.getSelf());
+		this.log().info("Stopped {}.", this.getSelf());
 	}
 
 	@Override
