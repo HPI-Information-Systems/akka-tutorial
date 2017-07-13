@@ -109,16 +109,17 @@ public class Master extends AbstractLoggingActor {
 		@Override
 		public boolean equals(Object o) {
 			if (this == o) return true;
-			if (o == null || getClass() != o.getClass()) return false;
+			if (o == null || getClass() != o.getClass()) 
+				return false;
 			final PrimesMessage that = (PrimesMessage) o;
-			return requestId == that.requestId &&
-					isComplete == that.isComplete &&
-					Objects.equals(primes, that.primes);
+			return this.requestId == that.requestId &&
+					this.isComplete == that.isComplete &&
+					Objects.equals(this.primes, that.primes);
 		}
 
 		@Override
 		public int hashCode() {
-			return Objects.hash(requestId, primes, isComplete);
+			return Objects.hash(this.requestId, this.primes, this.isComplete);
 		}
 	}
 
