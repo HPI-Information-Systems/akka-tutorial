@@ -108,7 +108,7 @@ public class Main {
          * Defines the scheduling strategy to be used in the master.
          */
         @Parameter(names = {"-s", "--scheduler"}, description = "a scheduling strategy (round-robin or reactive)")
-        String schedulingStrategy = "round-robin";
+        String schedulingStrategy = "reactive";
     }
 
     /**
