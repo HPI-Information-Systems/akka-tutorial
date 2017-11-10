@@ -119,7 +119,7 @@ public class Slave extends AbstractLoggingActor {
 		}
 
 		// Find the shepherd actor in the remote actor system
-		final ActorSelection selection = this.getContext().system().actorSelection(String.format("%s/user/%s", message.address, Shepherd.DEFAULT_NAME));
+		final ActorSelection selection = this.getContext().getSystem().actorSelection(String.format("%s/user/%s", message.address, Shepherd.DEFAULT_NAME));
 
 		// Register the local actor system by periodically sending subscription messages (until an acknowledgement was received)
 		final Scheduler scheduler = this.getContext().getSystem().scheduler();
@@ -149,7 +149,7 @@ public class Slave extends AbstractLoggingActor {
 		// Disassociations are a problem only once we have a running connection, i.e., no connection schedule is active; they do not concern this actor otherwise.
 		if (this.connectSchedule == null) {
 			this.log().error("Disassociated from master. Stopping...");
-			this.getContext().stop(getSelf());
+			this.getContext().stop(this.getSelf());
 		}
 	}
 
