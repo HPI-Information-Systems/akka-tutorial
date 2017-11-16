@@ -221,4 +221,9 @@ public class ReactiveSchedulingStrategy implements SchedulingStrategy {
 			this.worker2tracker.put(idleWorker, nextQueryTracker);
 		}
 	}
+
+	@Override
+	public int countWorkers() {
+		return this.worker2tracker.keySet().size();
+	}
 }

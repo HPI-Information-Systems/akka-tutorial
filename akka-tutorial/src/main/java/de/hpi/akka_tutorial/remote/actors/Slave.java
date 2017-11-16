@@ -11,6 +11,7 @@ import akka.actor.PoisonPill;
 import akka.actor.Props;
 import akka.actor.Scheduler;
 import akka.remote.DisassociatedEvent;
+import de.hpi.akka_tutorial.remote.messages.ShutdownMessage;
 import scala.concurrent.ExecutionContextExecutor;
 import scala.concurrent.duration.Duration;
 
@@ -58,14 +59,6 @@ public class Slave extends AbstractLoggingActor {
 
 		private static final long serialVersionUID = 2289467879887081348L;
 
-	}
-
-	/**
-	 * Asks the {@link Slave} to stop itself.
-	 */
-	public static class ShutdownMessage implements Serializable {
-
-		private static final long serialVersionUID = -8962039849767411379L;
 	}
 
 	// A scheduling item to keep on trying to reconnect as regularly

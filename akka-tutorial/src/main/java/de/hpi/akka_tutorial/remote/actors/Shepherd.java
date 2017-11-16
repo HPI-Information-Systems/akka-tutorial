@@ -7,8 +7,10 @@ import java.util.Set;
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
 import akka.actor.Address;
+import akka.actor.PoisonPill;
 import akka.actor.Props;
 import akka.actor.Terminated;
+import de.hpi.akka_tutorial.remote.messages.ShutdownMessage;
 
 /**
  * The shepherd lives in the master actor system and waits for slave subscriptions.
@@ -61,9 +63,9 @@ public class Shepherd extends AbstractLoggingActor {
 	public void postStop() throws Exception {
 		super.postStop();
 		
-		// Shutdown all slaves
+		// Stop all slaves that connected to this Shepherd
 		for (ActorRef slave : this.slaves)
-			slave.tell(new Slave.ShutdownMessage(), this.getSelf());
+			slave.tell(PoisonPill.getInstance(), this.getSelf());
 
 		// Log the stop event
 		this.log().info("Stopped {}.", this.getSelf());
@@ -73,6 +75,7 @@ public class Shepherd extends AbstractLoggingActor {
 	public Receive createReceive() {
 		return receiveBuilder()
 				.match(SubscriptionMessage.class, this::handle)
+				.match(ShutdownMessage.class, this::handle)
 				.match(Terminated.class, this::handle)
 				.matchAny(object -> this.log().info(this.getClass().getName() + " received unknown message: " + object.toString()))
 				.build();
@@ -99,6 +102,16 @@ public class Shepherd extends AbstractLoggingActor {
 
 		// Inform the master about the new remote system.
 		this.master.tell(new Master.RemoteSystemMessage(remoteAddress), this.getSelf());
+	}
+	
+	private void handle(ShutdownMessage message) {
+		
+		// Shutdown all slaves that connected to this Shepherd
+		for (ActorRef slave : this.slaves)
+			slave.tell(new ShutdownMessage(), this.getSelf());
+		
+		// Stop accepting new slaves (to do so, the actor can simply stop itself)
+		this.getSelf().tell(PoisonPill.getInstance(), this.getSelf());
 	}
 	
 	private void handle(Terminated message) {

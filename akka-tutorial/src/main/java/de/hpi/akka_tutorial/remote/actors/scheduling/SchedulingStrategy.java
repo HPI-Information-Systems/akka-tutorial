@@ -58,4 +58,8 @@ public interface SchedulingStrategy {
 	 */
 	void removeWorker(final ActorRef worker);
 
+	/**
+	 * Count the number of active {@link Worker} actors.
+	 */
+	int countWorkers();
 }

@@ -102,4 +102,9 @@ public class RoundRobinSchedulingStrategy implements SchedulingStrategy {
 		// Remove the worker from the router
 		this.workerRouter = this.workerRouter.removeRoutee(worker);
 	}
+
+	@Override
+	public int countWorkers() {
+		return this.numberOfWorkers;
+	}
 }

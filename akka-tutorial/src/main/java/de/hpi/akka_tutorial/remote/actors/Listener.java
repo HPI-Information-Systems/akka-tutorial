@@ -8,7 +8,9 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import akka.actor.AbstractLoggingActor;
+import akka.actor.PoisonPill;
 import akka.actor.Props;
+import de.hpi.akka_tutorial.remote.messages.ShutdownMessage;
 
 /**
  * The listener collects prime numbers and responds to action requests on these primes.
@@ -34,11 +36,16 @@ public class Listener extends AbstractLoggingActor {
 		private static final long serialVersionUID = -1779142448823490939L;
 		
 		private List<Long> primes;
-
+		
+		/**
+		 * Construct a new {@link PrimesMessage} object.
+		 * 
+		 * @param primes A list of prime numbers
+		 */
 		public PrimesMessage(final List<Long> primes) {
 			this.primes = primes;
 		}
-		
+
 		/**
 		 * For serialization/deserialization only.
 		 */
@@ -89,6 +96,7 @@ public class Listener extends AbstractLoggingActor {
 				.match(PrimesMessage.class, this::handle)
 				.match(LogPrimesMessage.class, this::handle)
 				.match(LogMaxMessage.class, this::handle)
+				.match(ShutdownMessage.class, this::handle)
 				.matchAny(object -> this.log().info(this.getClass().getName() + " received unknown message: " + object.toString()))
 				.build();
 	}
@@ -112,4 +120,11 @@ public class Listener extends AbstractLoggingActor {
 				.orElseGet(() -> { return 0L; });
 		this.log().info(String.format("Max prime: %d", prime));		
 	}
+
+	private void handle(ShutdownMessage message) {
+		// We could write all primes to disk here
+		
+		this.getSelf().tell(PoisonPill.getInstance(), this.getSelf());
+	}
+	
 }

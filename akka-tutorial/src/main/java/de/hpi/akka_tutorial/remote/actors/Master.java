@@ -20,6 +20,7 @@ import akka.actor.Terminated;
 import akka.japi.pf.DeciderBuilder;
 import akka.remote.RemoteScope;
 import de.hpi.akka_tutorial.remote.actors.scheduling.SchedulingStrategy;
+import de.hpi.akka_tutorial.remote.messages.ShutdownMessage;
 import scala.concurrent.duration.Duration;
 
 /**
@@ -45,7 +46,7 @@ public class Master extends AbstractLoggingActor {
 
 		private static final long serialVersionUID = 1538940836039448197L;
 
-		private final long startNumber, endNumber;
+		private long startNumber, endNumber;
 
 		/**
 		 * Construct a new {@link RangeMessage} object.
@@ -58,19 +59,17 @@ public class Master extends AbstractLoggingActor {
 			this.endNumber = endNumber;
 		}
 
+		/**
+		 * For serialization/deserialization only.
+		 */
+		@SuppressWarnings("unused")
+		private RangeMessage() {
+		}
+
 		@Override
 		public String toString() {
 			return String.format("%s[%,d..%,d]", this.getClass().getSimpleName(), this.startNumber, this.endNumber);
 		}
-	}
-
-	/**
-	 * Asks the {@link Master} to complete the distributed calculation of prime numbers and to stop its actor hierarchy afterwards.
-	 * The {@link Master} will, in particular, not accept any further {@link RangeMessage}s after this message was received.
-	 */
-	public static class ShutdownMessage implements Serializable {
-
-		private static final long serialVersionUID = -6270485216802183364L;
 	}
 
 	/**
@@ -201,6 +200,9 @@ public class Master extends AbstractLoggingActor {
 	public void postStop() throws Exception {
 		super.postStop();
 		
+		// If the master has stopped, it can also stop the listener
+		this.listener.tell(PoisonPill.getInstance(), this.getSelf());
+		
 		// Log the stop event
 		this.log().info("Stopped {}.", this.getSelf());
 	}
@@ -254,8 +256,8 @@ public class Master extends AbstractLoggingActor {
 		// Stop receiving new queries
 		this.isAcceptingRequests = false;
 		
-		// Stop the actor hierarchy if no tasks are in progress
-		if (!this.schedulingStrategy.hasTasksInProgress()) {
+		// Check if work is complete and stop the actor hierarchy if true
+		if (this.hasFinished()) {
 			this.stopSelfAndListener();
 		}
 	}
@@ -269,18 +271,15 @@ public class Master extends AbstractLoggingActor {
 		if (!message.isComplete) 
 			return;
 		
-		// Find out who returned the result
-		final ActorRef worker = this.getSender();
-		
 		// Notify the scheduler that the worker has finished its task
-		this.schedulingStrategy.finished(message.requestId, worker);
+		this.schedulingStrategy.finished(message.requestId, this.getSender());
 		
-		// Check if work is now complete
-		if (!this.isAcceptingRequests && !this.schedulingStrategy.hasTasksInProgress()) {
+		// Check if work is complete and stop the actor hierarchy if true
+		if (this.hasFinished()) {
 			this.stopSelfAndListener();
 		}
 	}
-
+	
 	private void handle(Terminated message) {
 		
 		// Find the sender of this message
@@ -290,14 +289,25 @@ public class Master extends AbstractLoggingActor {
 		this.schedulingStrategy.removeWorker(sender);
 		
 		this.log().warning("{} has terminated.", sender);
+		
+		// Check if work is complete and stop the actor hierarchy if true
+		if (this.hasFinished()) {
+			this.stopSelfAndListener();
+		}
 	}
-	
+
+	private boolean hasFinished() {
+		
+		// The master has finished if (1) there will be no further requests and (2) either all requests have been processed or there are no more workers to process these requests
+		return !this.isAcceptingRequests && (!this.schedulingStrategy.hasTasksInProgress() || this.schedulingStrategy.countWorkers() < 1);
+	}
+
 	private void stopSelfAndListener() {
 		
 		// Tell the listener to stop
-		this.listener.tell(PoisonPill.getInstance(), this.getSelf());
+		this.listener.tell(new ShutdownMessage(), this.getSelf());
 		
-		// Stop self by sending a poison pill
+		// Stop self and all child actors by sending a poison pill
 		this.getSelf().tell(PoisonPill.getInstance(), this.getSelf());
 	}
 }
