@@ -42,6 +42,9 @@
                                         implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>de.hpi.akka_tutorial.Main</mainClass>
                                 </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>reference.conf</resource>
+                                </transformer>
                             </transformers>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                         </configuration>
