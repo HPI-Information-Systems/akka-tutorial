@@ -78,6 +78,8 @@ public class ReactiveSchedulingStrategy implements SchedulingStrategy {
 			// Otherwise, return null as there is nothing to do at the moment
 			return null;
 		}
+		
+		
 
 		/**
 		 * Handle the failure of a subquery. That is, prepare to re-schedule the failed subquery.
@@ -195,30 +197,30 @@ public class ReactiveSchedulingStrategy implements SchedulingStrategy {
 				.filter(e -> e.getValue() == null)
 				.map(Map.Entry::getKey)
 				.collect(Collectors.toList());
-
-		// Try to assign new subqueries to all idle workers
+		
+		// Assign idle workers to subqueries as long as there is work to do
 		Iterator<QueryTracker> queryTrackerIterator = this.queryId2tracker.values().iterator();
-
-		// Check if there is any on-going query at the moment
-		if (!queryTrackerIterator.hasNext()) 
-			return;
-		QueryTracker nextQueryTracker = queryTrackerIterator.next();
-
-		// Assign all idle workers as long as there is work to do
 		for (ActorRef idleWorker : idleWorkers) {
-			
-			// Poll the next subquery from the current query tracker
+			QueryTracker queryTracker;
 			Worker.ValidationMessage subquery;
-			if ((subquery = nextQueryTracker.pollNextSubquery(idleWorker)) == null) {
-				// If the current query tracker does not have open work items, go to the next one
+			
+			// Find an unassigned subquery
+			do {
+				// Check if there is any (further) on-going query
 				if (!queryTrackerIterator.hasNext()) 
 					return;
-				nextQueryTracker = queryTrackerIterator.next();
+				
+				// Select the (next) query tracker
+				queryTracker = queryTrackerIterator.next();
+				
+				// Poll the next subquery from the current query tracker
+				subquery = queryTracker.pollNextSubquery(idleWorker);
 			}
+			while (subquery == null);
 
 			// Assign the subquery to the worker and keep track of the assignment
 			idleWorker.tell(subquery, this.master);
-			this.worker2tracker.put(idleWorker, nextQueryTracker);
+			this.worker2tracker.put(idleWorker, queryTracker);
 		}
 	}
 
