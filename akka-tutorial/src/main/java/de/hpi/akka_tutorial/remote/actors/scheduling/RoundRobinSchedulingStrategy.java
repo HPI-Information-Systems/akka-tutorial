@@ -19,7 +19,6 @@ public class RoundRobinSchedulingStrategy implements SchedulingStrategy {
 		public SchedulingStrategy create(ActorRef master) {
 			return new RoundRobinSchedulingStrategy(master);
 		}
-
 	}
 
 	// A round robin router for our workers
