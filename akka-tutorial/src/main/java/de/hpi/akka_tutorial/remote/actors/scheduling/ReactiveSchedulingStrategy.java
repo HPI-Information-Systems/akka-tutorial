@@ -23,7 +23,6 @@ public class ReactiveSchedulingStrategy implements SchedulingStrategy {
 		public ReactiveSchedulingStrategy create(ActorRef master) {
 			return new ReactiveSchedulingStrategy(master);
 		}
-
 	}
 
 	/**
@@ -46,39 +45,43 @@ public class ReactiveSchedulingStrategy implements SchedulingStrategy {
 		// Keeps track of failed subqueries, so as to reschedule them to some worker.
 		private final Queue<Worker.ValidationMessage> failedSubqueries = new LinkedList<>();
 
-		private QueryTracker(final int id, final long startNumber, final long endNumber) {
+		QueryTracker(final int id, final long startNumber, final long endNumber) {
 			this.id = id;
 			this.remainingRangeStartNumber = startNumber;
 			this.remainingRangeEndNumber = endNumber;
 		}
 
 		/**
-		 * Create a new subquery to ask some worker. If a subquery was available, it will be registered as "in progress" with the worker.
+		 * Assign a subquery of the tracked query to the worker. If a subquery was available, a {@link Worker.ValidationMessage} is send to the worker with master as sender.
 		 *
 		 * @return a new subquery or {@code null}
 		 */
-		Worker.ValidationMessage pollNextSubquery(ActorRef actorRef) {
+		boolean assignWork(ActorRef worker, ActorRef master) {
 
-			// Restart a failed subquery if any
-			if (!this.failedSubqueries.isEmpty()) {
-				Worker.ValidationMessage subquery = this.failedSubqueries.poll();
-				this.runningSubqueries.put(actorRef, subquery);
-				return subquery;
+			// Select a failed subquery if any
+			Worker.ValidationMessage subquery = this.failedSubqueries.poll();
+			
+			// Create a new subquery if no failed subquery was selected
+			if (subquery == null) {
+				long subqueryRangeSize = Math.min(this.remainingRangeEndNumber - this.remainingRangeStartNumber + 1, MAX_SUBQUERY_RANGE_SIZE);
+				if (subqueryRangeSize > 0) {
+					subquery = new Worker.ValidationMessage(this.id, this.remainingRangeStartNumber, this.remainingRangeStartNumber + subqueryRangeSize - 1);
+					this.remainingRangeStartNumber += subqueryRangeSize;
+				}
 			}
-
-			// Otherwise, form a new subquery
-			long subqueryRangeSize = Math.min(this.remainingRangeEndNumber - this.remainingRangeStartNumber + 1, MAX_SUBQUERY_RANGE_SIZE);
-			if (subqueryRangeSize > 0) {
-				Worker.ValidationMessage subquery = new Worker.ValidationMessage(this.id, this.remainingRangeStartNumber, this.remainingRangeStartNumber + subqueryRangeSize - 1);
-				this.remainingRangeStartNumber += subqueryRangeSize;
-				this.runningSubqueries.put(actorRef, subquery);
-				return subquery;
+			
+			// Return false if no work was assigned
+			if (subquery == null) {
+				return false;
 			}
-
-			// Otherwise, return null as there is nothing to do at the moment
-			return null;
+			
+			// Assign and send the subquery to the worker
+			worker.tell(subquery, master);
+			this.runningSubqueries.put(worker, subquery);
+			
+			return true;
 		}
-
+		
 		/**
 		 * Handle the failure of a subquery. That is, prepare to re-schedule the failed subquery.
 		 *
@@ -195,30 +198,25 @@ public class ReactiveSchedulingStrategy implements SchedulingStrategy {
 				.filter(e -> e.getValue() == null)
 				.map(Map.Entry::getKey)
 				.collect(Collectors.toList());
-
-		// Try to assign new subqueries to all idle workers
+		
+		// Assign idle workers to subqueries as long as there is work to do
 		Iterator<QueryTracker> queryTrackerIterator = this.queryId2tracker.values().iterator();
-
-		// Check if there is any on-going query at the moment
-		if (!queryTrackerIterator.hasNext()) 
-			return;
-		QueryTracker nextQueryTracker = queryTrackerIterator.next();
-
-		// Assign all idle workers as long as there is work to do
 		for (ActorRef idleWorker : idleWorkers) {
+			QueryTracker queryTracker;
 			
-			// Poll the next subquery from the current query tracker
-			Worker.ValidationMessage subquery;
-			if ((subquery = nextQueryTracker.pollNextSubquery(idleWorker)) == null) {
-				// If the current query tracker does not have open work items, go to the next one
+			// Find a query tracker that can assign a subquery to this idle worker
+			do {
+				// Check if there is any (further) on-going query
 				if (!queryTrackerIterator.hasNext()) 
 					return;
-				nextQueryTracker = queryTrackerIterator.next();
+				
+				// Select the (next) query tracker
+				queryTracker = queryTrackerIterator.next();
 			}
+			while (!queryTracker.assignWork(idleWorker, this.master));
 
 			// Assign the subquery to the worker and keep track of the assignment
-			idleWorker.tell(subquery, this.master);
-			this.worker2tracker.put(idleWorker, nextQueryTracker);
+			this.worker2tracker.put(idleWorker, queryTracker);
 		}
 	}
 

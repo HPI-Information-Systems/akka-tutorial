@@ -164,6 +164,7 @@ public class Master extends AbstractLoggingActor {
 
 	/**
 	 * Construct a new {@link Master} object.
+	 * 
 	 * @param listener a reference to an {@link Listener} actor to send results to
 	 * @param schedulingStrategyFactory defines which {@link SchedulingStrategy} to use
 	 * @param numLocalWorkers number of workers that this master should start locally
