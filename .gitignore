@@ -2,6 +2,8 @@
 .classpath
 .settings
 /.settings
+.metadata
+/.metadata
 *.releaseBackup
 release.properties
 .idea

@@ -9,13 +9,13 @@ import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.actor.Address;
 import akka.actor.PoisonPill;
-import de.hpi.akka_tutorial.remote.actors.scheduling.SchedulingStrategy;
-import de.hpi.akka_tutorial.remote.messages.ShutdownMessage;
 import de.hpi.akka_tutorial.remote.actors.Listener;
 import de.hpi.akka_tutorial.remote.actors.Master;
 import de.hpi.akka_tutorial.remote.actors.Reaper;
 import de.hpi.akka_tutorial.remote.actors.Shepherd;
 import de.hpi.akka_tutorial.remote.actors.Slave;
+import de.hpi.akka_tutorial.remote.actors.scheduling.SchedulingStrategy;
+import de.hpi.akka_tutorial.remote.messages.ShutdownMessage;
 import de.hpi.akka_tutorial.util.AkkaUtils;
 import scala.concurrent.Await;
 import scala.concurrent.duration.Duration;
@@ -163,4 +163,6 @@ public class Calculator {
 		// Await termination: The termination should be issued by the reaper
 		Calculator.awaitTermination(actorSystem);
 	}
+
 }
+
