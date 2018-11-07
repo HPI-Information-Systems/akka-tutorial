@@ -4,6 +4,7 @@
 /.settings
 .metadata
 /.metadata
+.recommenders
 *.releaseBackup
 release.properties
 .idea
@@ -15,3 +16,5 @@ bin/
 target
 datasets/
 output/
+copyOctopus2Thor.sh
+copyAkkaTutorial2Thor.sh

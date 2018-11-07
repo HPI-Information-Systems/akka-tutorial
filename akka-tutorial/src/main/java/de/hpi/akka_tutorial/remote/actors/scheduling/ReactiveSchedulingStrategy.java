@@ -54,7 +54,7 @@ public class ReactiveSchedulingStrategy implements SchedulingStrategy {
 		/**
 		 * Assign a subquery of the tracked query to the worker. If a subquery was available, a {@link Worker.ValidationMessage} is send to the worker with master as sender.
 		 *
-		 * @return a new subquery or {@code null}
+		 * @return {@code true}, if work was assigned and {@code false} otherwise
 		 */
 		boolean assignWork(ActorRef worker, ActorRef master) {
 
@@ -199,13 +199,17 @@ public class ReactiveSchedulingStrategy implements SchedulingStrategy {
 				.map(Map.Entry::getKey)
 				.collect(Collectors.toList());
 		
-		// Assign idle workers to subqueries as long as there is work to do
+		// Return if no query is present
+		if (this.queryId2tracker.isEmpty())
+			return;
+		
+		// Assign idle workers to pending subqueries
 		Iterator<QueryTracker> queryTrackerIterator = this.queryId2tracker.values().iterator();
+		QueryTracker queryTracker = queryTrackerIterator.next();
 		for (ActorRef idleWorker : idleWorkers) {
-			QueryTracker queryTracker;
 			
 			// Find a query tracker that can assign a subquery to this idle worker
-			do {
+			while (!queryTracker.assignWork(idleWorker, this.master)) {
 				// Check if there is any (further) on-going query
 				if (!queryTrackerIterator.hasNext()) 
 					return;
@@ -213,7 +217,6 @@ public class ReactiveSchedulingStrategy implements SchedulingStrategy {
 				// Select the (next) query tracker
 				queryTracker = queryTrackerIterator.next();
 			}
-			while (!queryTracker.assignWork(idleWorker, this.master));
 
 			// Assign the subquery to the worker and keep track of the assignment
 			this.worker2tracker.put(idleWorker, queryTracker);
