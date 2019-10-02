@@ -106,9 +106,11 @@ public class Worker extends AbstractActor {
 	}
 	
 	private boolean isPrime(long n) {
+		if (n == 1)
+			return false;
 		
 		// Check for the most basic primes
-		if (n == 1 || n == 2 || n == 3)
+		if (n == 2 || n == 3)
 			return true;
 
 		// Check if n is an even number
