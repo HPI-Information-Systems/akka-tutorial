@@ -11,7 +11,6 @@ release.properties
 /.idea
 *.iml
 *.class
-data/
 bin/
 target
 datasets/
