@@ -71,7 +71,7 @@ public class Master extends AbstractLoggingActor {
 	private long startTime;
 	
 	private final BloomFilter data = new BloomFilter(BloomFilter.DEFAULT_SIZE, true);
-	private int pendingResponses = 0;
+	private int pendingResponses = 1;
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -101,7 +101,6 @@ public class Master extends AbstractLoggingActor {
 		this.startTime = System.currentTimeMillis();
 		
 		this.reader.tell(new Reader.ReadMessage(), this.self());
-		this.pendingResponses++;
 	}
 	
 	protected void handle(BatchMessage message) {
@@ -126,7 +125,7 @@ public class Master extends AbstractLoggingActor {
 	
 	protected void handle(ResponseMessage message) {
 		////////////////////////////////////////////////////////////////////////////////
-		// The responses are a mechanism to make the prototype project work. ///////////
+		// The pending responses are a mechanism to make the prototype project work. ///
 		// TODO: Implement a different shutdown protocol for the concrete assignment. //
 		////////////////////////////////////////////////////////////////////////////////
 		
