@@ -3,9 +3,9 @@
 	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 
 	<modelVersion>4.0.0</modelVersion>
-	<artifactId>ddm</artifactId>
+	<artifactId>ddm-lmp</artifactId>
 	<groupId>hpi.de</groupId>
-	<name>ddm</name>
+	<name>ddm-lmp</name>
 	<version>1.0</version>
 
 	<properties>

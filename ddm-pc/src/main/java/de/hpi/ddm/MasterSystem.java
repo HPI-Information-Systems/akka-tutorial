@@ -34,7 +34,29 @@ public class MasterSystem {
 			.withFallback(ConfigFactory.load("application"));
 		
 		final ActorSystem system = ActorSystem.create(c.getActorSystemName(), config);
+
+	//	ActorRef clusterListener = system.actorOf(ClusterListener.props(), ClusterListener.DEFAULT_NAME);
+	//	ActorRef metricsListener = system.actorOf(MetricsListener.props(), MetricsListener.DEFAULT_NAME);
 		
+		ActorRef reaper = system.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
+		
+		ActorRef reader = system.actorOf(Reader.props(), Reader.DEFAULT_NAME);
+		
+		ActorRef collector = system.actorOf(Collector.props(), Collector.DEFAULT_NAME);
+		
+		ActorRef master = system.actorOf(Master.props(reader, collector), Master.DEFAULT_NAME);
+		
+		Cluster.get(system).registerOnMemberUp(new Runnable() {
+			@Override
+			public void run() {
+				for (int i = 0; i < c.getNumWorkers(); i++)
+					system.actorOf(Worker.props(), Worker.DEFAULT_NAME + i);
+				
+				if (!c.isStartPaused())
+					system.actorSelection("/user/" + Master.DEFAULT_NAME).tell(new Master.StartMessage(), ActorRef.noSender());
+			}
+		});
+
 		Cluster.get(system).registerOnMemberRemoved(new Runnable() {
 			@Override
 			public void run() {
@@ -50,28 +72,6 @@ public class MasterSystem {
 						}
 					}
 				}.start();
-			}
-		});
-		
-		Cluster.get(system).registerOnMemberUp(new Runnable() {
-			@Override
-			public void run() {
-			//	ActorRef clusterListener = system.actorOf(ClusterListener.props(), ClusterListener.DEFAULT_NAME);
-			//	ActorRef metricsListener = system.actorOf(MetricsListener.props(), MetricsListener.DEFAULT_NAME);
-				
-				ActorRef reaper = system.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
-				
-				ActorRef reader = system.actorOf(Reader.props(), Reader.DEFAULT_NAME);
-				
-				ActorRef collector = system.actorOf(Collector.props(), Collector.DEFAULT_NAME);
-				
-				ActorRef master = system.actorOf(Master.props(reader, collector), Master.DEFAULT_NAME);
-				
-				for (int i = 0; i < c.getNumWorkers(); i++)
-					system.actorOf(Worker.props(), Worker.DEFAULT_NAME + i);
-				
-				if (!c.isStartPaused())
-					system.actorSelection("/user/" + Master.DEFAULT_NAME).tell(new Master.StartMessage(), ActorRef.noSender());
 			}
 		});
 		

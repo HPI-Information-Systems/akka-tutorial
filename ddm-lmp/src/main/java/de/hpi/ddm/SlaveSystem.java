@@ -31,6 +31,16 @@ public class SlaveSystem {
 		
 		final ActorSystem system = ActorSystem.create(c.getActorSystemName(), config);
 		
+		ActorRef reaper = system.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
+		
+		Cluster.get(system).registerOnMemberUp(new Runnable() {
+			@Override
+			public void run() {
+				for (int i = 0; i < c.getNumWorkers(); i++)
+					system.actorOf(Worker.props(), Worker.DEFAULT_NAME + i);
+			}
+		});
+		
 		Cluster.get(system).registerOnMemberRemoved(new Runnable() {
 			@Override
 			public void run() {
@@ -46,19 +56,6 @@ public class SlaveSystem {
 						}
 					}
 				}.start();
-			}
-		});
-		
-		Cluster.get(system).registerOnMemberUp(new Runnable() {
-			@Override
-			public void run() {
-			//	ActorRef clusterListener = system.actorOf(ClusterListener.props(), ClusterListener.DEFAULT_NAME);
-			//	ActorRef metricsListener = system.actorOf(MetricsListener.props(), MetricsListener.DEFAULT_NAME);
-				
-				ActorRef reaper = system.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
-				
-				for (int i = 0; i < c.getNumWorkers(); i++)
-					system.actorOf(Worker.props(), Worker.DEFAULT_NAME + i);
 			}
 		});
 	}

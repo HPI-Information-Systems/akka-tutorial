@@ -16,7 +16,6 @@ import akka.cluster.ClusterEvent.MemberUp;
 import akka.cluster.Member;
 import akka.cluster.MemberStatus;
 import de.hpi.ddm.MasterSystem;
-import de.hpi.ddm.structures.BloomFilter;
 
 public class Worker extends AbstractLoggingActor {
 
@@ -32,7 +31,6 @@ public class Worker extends AbstractLoggingActor {
 
 	public Worker() {
 		this.cluster = Cluster.get(this.context().system());
-		this.largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
 	}
 	
 	////////////////////
@@ -45,7 +43,6 @@ public class Worker extends AbstractLoggingActor {
 
 	private Member masterSystem;
 	private final Cluster cluster;
-	private final ActorRef largeMessageProxy;
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -73,7 +70,6 @@ public class Worker extends AbstractLoggingActor {
 				.match(CurrentClusterState.class, this::handle)
 				.match(MemberUp.class, this::handle)
 				.match(MemberRemoved.class, this::handle)
-				.match(BloomFilter.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -102,11 +98,6 @@ public class Worker extends AbstractLoggingActor {
 	private void handle(MemberRemoved message) {
 		if (this.masterSystem.equals(message.member()))
 			this.self().tell(PoisonPill.getInstance(), ActorRef.noSender());
-	}
-	
-	private void handle(BloomFilter message) {
-		this.log().info("Many thanks for the BloomFilter!");
-		this.sender().tell(new Master.ResponseMessage(), this.self());
 	}
 	
 	private String hash(String line) {
