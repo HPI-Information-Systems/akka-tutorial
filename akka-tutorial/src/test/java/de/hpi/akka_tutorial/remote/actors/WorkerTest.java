@@ -32,7 +32,7 @@ public class WorkerTest {
 			worker.tell(new Worker.ValidationMessage(0, 1, 10), this.getRef());
 
 			// Expect the correct response.
-			Master.PrimesMessage expectedMsg = new Master.PrimesMessage(0, Arrays.asList(1L, 2L, 3L, 5L, 7L), true);
+			Master.PrimesMessage expectedMsg = new Master.PrimesMessage(0, Arrays.asList(2L, 3L, 5L, 7L), true);
 			this.expectMsg(Duration.create(3, "secs"), expectedMsg);
 		}};
 	}
