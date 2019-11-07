@@ -30,7 +30,7 @@ public class MasterSystem {
 				"akka.remote.artery.canonical.hostname = \"" + c.getHost() + "\"\n" +
 				"akka.remote.artery.canonical.port = " + c.getPort() + "\n" +
 				"akka.cluster.roles = [" + MASTER_ROLE + "]\n" +
-				"akka.cluster.seed-nodes = [\"akka://" + c.getActorSystemName() + "@" + c.getMasterHost() + ":" + c.getMasterPort() + "\"]")
+				"akka.cluster.seed-nodes = [\"akka://" + c.getActorSystemName() + "@" + c.getHost() + ":" + c.getPort() + "\"]")
 			.withFallback(ConfigFactory.load("application"));
 		
 		final ActorSystem system = ActorSystem.create(c.getActorSystemName(), config);
