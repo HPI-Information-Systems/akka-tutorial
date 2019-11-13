@@ -122,6 +122,12 @@
 			<scope>test</scope>
 		</dependency>
 
+		<dependency>
+			<groupId>com.esotericsoftware</groupId>
+			<artifactId>kryo</artifactId>
+			<version>5.0.0-RC4</version>
+		</dependency>
+
 	</dependencies>
 
 	<build>

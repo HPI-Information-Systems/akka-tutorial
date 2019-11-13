@@ -1,8 +1,8 @@
 package de.hpi.ddm.structures;
 
-import java.util.List;
-
 import de.hpi.ddm.configuration.ConfigurationSingleton;
+
+import java.util.List;
 
 public class BloomFilter {
 
@@ -61,8 +61,7 @@ public class BloomFilter {
 	
 	/**
 	 * Adds all the elements to the BloomFilter.
-	 * @param element the element to be added
-	 * @return true if the element was added; false if it existed already
+	 * @param elements the elements to be added
 	 */
 	public void addAll(List<BitSet> elements) {
 		int[] buckets = new int[elements.size()];
