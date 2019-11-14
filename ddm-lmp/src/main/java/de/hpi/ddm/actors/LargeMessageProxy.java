@@ -9,14 +9,19 @@ import akka.stream.OverflowStrategy;
 import akka.stream.javadsl.Sink;
 import akka.stream.javadsl.Source;
 import com.esotericsoftware.kryo.Kryo;
+import com.esotericsoftware.kryo.KryoException;
 import com.esotericsoftware.kryo.io.Input;
 import com.esotericsoftware.kryo.io.Output;
 import com.esotericsoftware.kryo.serializers.FieldSerializer;
+import de.hpi.ddm.serialization.Chunk;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.io.*;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.Serializable;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.LinkedList;
@@ -38,7 +43,6 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	public static Props props() {
 		return Props.create(LargeMessageProxy.class);
 	}
-	private List<byte[]> messageChunks = new LinkedList<>();
 
 	////////////////////
 	// Actor Messages //
@@ -63,6 +67,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		private static final long serialVersionUID = 2546055321597800174L;
 		private ActorRef sender;
 		private ActorRef receiver;
+		private int chunkCount;
 	}
 
 	@Data @AllArgsConstructor
@@ -70,10 +75,12 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		private static final long serialVersionUID = 4593304793354806849L;
 		private final Throwable cause;
 	}
-	
+
 	/////////////////
 	// Actor State //
 	/////////////////
+
+	private List<Chunk> messageChunks = new LinkedList<>();
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -89,7 +96,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 				.match(LargeMessage.class, this::handle)
 				.match(StreamCompleted.class, this::handle)
 				.match(StreamFailure.class, this::handle)
-				.match(byte[].class, this::handle)
+				.match(Chunk.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -108,31 +115,36 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 			return;
 		}
 
-		Sink<byte[], NotUsed> sink = Sink.actorRef(
-				receiverProxy,
-				new StreamCompleted(this.sender(), receiver));
 		BytesMessage<?> bytesMessage = new BytesMessage<>(message.getMessage());
-		List<byte[]> messageContents = serializeAndSplit(bytesMessage);
+		List<Chunk> messageContents = serializeAndSplit(bytesMessage);
 
-		Source<byte[], NotUsed> source = Source.from(messageContents);
+		Source<Chunk, NotUsed> source = Source.from(messageContents);
+		Sink<Chunk, NotUsed> sink = Sink.actorRef(
+				receiverProxy,
+				new StreamCompleted(this.sender(), receiver, messageContents.size()));
 		source.buffer(BUFFER_SIZE, OverflowStrategy.backpressure())
 				.runWith(sink, ActorMaterializer.create(this.context().system()));
 	}
 
-	private void handle(byte[] messageChunk) {
+	private void handle(Chunk messageChunk) {
 		this.messageChunks.add(messageChunk);
 	}
 
 	private void handle(StreamCompleted completed) {
 		log().info("Stream completed with {} chunks", this.messageChunks.size());
+
+		if (messageChunks.size() < completed.chunkCount) {
+			log().error("Did not receive all message chunks of LargeMessage to {}", completed.receiver);
+			discardMessageChunks();
+			return;
+		}
 		BytesMessage<?> message = null;
 		try {
 			message = joinAndDeserialize(this.messageChunks);
-		} catch (IOException e) {
-			log().error("Could not deserialize LargeMessage for {}", completed.receiver);
-			e.printStackTrace();
+		} catch (IOException | KryoException | IndexOutOfBoundsException e) {
+			log().error("Could not deserialize LargeMessage to {}", completed.receiver);
 		} finally {
-			messageChunks = new LinkedList<>();
+			discardMessageChunks();
 		}
 
 		if (message != null) {
@@ -142,14 +154,14 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	}
 
 	private void handle(StreamFailure failed) {
-		messageChunks = new LinkedList<>();
+		discardMessageChunks();
 		log().error(failed.getCause(), "Stream failed");
 	}
 
-	private <T> List<byte[]> serializeAndSplit(BytesMessage<T> message) {
+	private <T> List<Chunk> serializeAndSplit(BytesMessage<T> message) {
 		return split(serialize(message));
 	}
-	private static BytesMessage<?> joinAndDeserialize(List<byte[]> data) throws IOException {
+	private static BytesMessage<?> joinAndDeserialize(List<Chunk> data) throws IOException {
 		return deserialize(join(data));
 	}
 
@@ -169,21 +181,21 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		return buffer;
 	}
 
-	private static List<byte[]> split(byte[] bytes) {
-		List<byte[]> result = new LinkedList<>();
+	private static List<Chunk> split(byte[] bytes) {
+		List<Chunk> result = new LinkedList<>();
 		for(int i = 0; i < bytes.length; i += CHUNK_SIZE_BYTES) {
 			int end = Math.min(i + CHUNK_SIZE_BYTES, bytes.length);
-			result.add(Arrays.copyOfRange(bytes, i, end));
+			result.add(new Chunk(Arrays.copyOfRange(bytes, i, end)));
 		}
 		return result;
 	}
 
-	private static byte[] join(List<byte[]> bytes) throws IOException {
+	private static byte[] join(List<Chunk> bytes) throws IOException {
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		byte[] buffer;
 		try {
-			for(byte[] i: bytes) {
-				out.write(i);
+			for(Chunk i: bytes) {
+				out.write(i.getBytes());
 			}
 			buffer = out.toByteArray();
 		} finally {
@@ -207,5 +219,9 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		FieldSerializer<?> serializer = new FieldSerializer<BytesMessage<?>>(kryo, BytesMessage.class);
 		kryo.register(BytesMessage.class, serializer);
 		return kryo;
+	}
+
+	private void discardMessageChunks() {
+		this.messageChunks = new LinkedList<>();
 	}
 }
