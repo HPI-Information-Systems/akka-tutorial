@@ -28,6 +28,7 @@ public class Master extends AbstractLoggingActor {
 		this.collector = collector;
 		this.workers = new ArrayList<>();
 		this.waitingWorkers = new HashSet<>();
+		this.completedPersons = new HashSet<>();
 	}
 
 	////////////////////
@@ -84,6 +85,7 @@ public class Master extends AbstractLoggingActor {
 	private final ActorRef reader;
 	private final ActorRef collector;
 	private final List<ActorRef> workers;
+	private final Set<Integer> completedPersons;
 	private int batchSize;
 	private Set<ActorRef> waitingWorkers;
 
@@ -149,8 +151,8 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	private void handle(ExcludedChar excludedChar) {
-		this.charSetManager.handleExcludedChar(excludedChar.value, excludedChar.personID, excludedChar.hash);
-		if (this.persons.containsKey(excludedChar.personID)) {
+		if (!this.completedPersons.contains(excludedChar.personID)) {
+			this.charSetManager.handleExcludedChar(excludedChar.value, excludedChar.personID, excludedChar.hash);
 			Person person = this.persons.get(excludedChar.personID);
 			person.dropChar(excludedChar.value);
 			for (Hint hint : person.getHints()) {
@@ -163,15 +165,16 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	private void handle(IncludedChar includedChar) {
-		this.charSetManager.handleIncludedChar(includedChar.value, includedChar.personID);
-        if (this.persons.containsKey(includedChar.personID)) {
-            Person person = this.persons.get(includedChar.personID);
-            person.addChar(includedChar.value);
-        }
+		if (!this.completedPersons.contains(includedChar.personID)) {
+			this.charSetManager.handleIncludedChar(includedChar.value, includedChar.personID);
+			Person person = this.persons.get(includedChar.personID);
+			person.addChar(includedChar.value);
+		}
 	}
 
 	private void handle(Solution solution) {
 		Person person = this.persons.get(solution.personID);
+		this.completedPersons.add(solution.personID);
 		log().info("Password of person {} ({}): {}", person.getId(), person.getName(), solution.solution);
 		this.persons.remove(person.getId());
 		if (this.persons.size() == 0) {
