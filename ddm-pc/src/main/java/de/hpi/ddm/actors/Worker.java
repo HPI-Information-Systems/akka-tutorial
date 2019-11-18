@@ -1,10 +1,5 @@
 package de.hpi.ddm.actors;
 
-import java.io.UnsupportedEncodingException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.List;
-
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
 import akka.actor.PoisonPill;
@@ -16,13 +11,24 @@ import akka.cluster.ClusterEvent.MemberUp;
 import akka.cluster.Member;
 import akka.cluster.MemberStatus;
 import de.hpi.ddm.MasterSystem;
+import de.hpi.ddm.structures.Hint;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+import java.io.Serializable;
+import java.io.UnsupportedEncodingException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.*;
 
 public class Worker extends AbstractLoggingActor {
 
 	////////////////////////
 	// Actor Construction //
 	////////////////////////
-	
+
 	public static final String DEFAULT_NAME = "worker";
 
 	public static Props props() {
@@ -32,10 +38,32 @@ public class Worker extends AbstractLoggingActor {
 	public Worker() {
 		this.cluster = Cluster.get(this.context().system());
 	}
-	
+
 	////////////////////
 	// Actor Messages //
 	////////////////////
+
+	@Data
+	public static class MasterHello implements Serializable {
+		private static final long serialVersionUID = 6508051783772496189L;
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class PermutationsRequest implements Serializable {
+		private static final long serialVersionUID = 2767978393215113993L;
+		private Set<Hint> hints;
+		private Set<Character> charSet;
+		private Character missingChar;
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class CrackingRequest implements Serializable {
+		private static final long serialVersionUID = -7373650189022842961L;
+		private Integer personID;
+		private String hash;
+		private int length;
+		private Set<Character> charSet;
+	}
 
 	/////////////////
 	// Actor State //
@@ -43,7 +71,8 @@ public class Worker extends AbstractLoggingActor {
 
 	private Member masterSystem;
 	private final Cluster cluster;
-	
+	private ActorRef master;
+
 	/////////////////////
 	// Actor Lifecycle //
 	/////////////////////
@@ -51,7 +80,7 @@ public class Worker extends AbstractLoggingActor {
 	@Override
 	public void preStart() {
 		Reaper.watchWithDefaultReaper(this);
-		
+
 		this.cluster.subscribe(this.self(), MemberUp.class, MemberRemoved.class);
 	}
 
@@ -64,14 +93,28 @@ public class Worker extends AbstractLoggingActor {
 	// Actor Behavior //
 	////////////////////
 
+	@Getter @AllArgsConstructor
+	private static class Finished extends Error {
+		private static final long serialVersionUID = -6952413878046495269L;
+		private final String solution;
+	}
+
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
 				.match(CurrentClusterState.class, this::handle)
 				.match(MemberUp.class, this::handle)
+				.match(MasterHello.class, this::handle)
 				.match(MemberRemoved.class, this::handle)
+				.match(PermutationsRequest.class, this::handle)
+				.match(CrackingRequest.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
+	}
+
+	private void handle(MasterHello masterHello) {
+		this.master = this.sender();
+		requestWork();
 	}
 
 	private void handle(CurrentClusterState message) {
@@ -88,44 +131,92 @@ public class Worker extends AbstractLoggingActor {
 	private void register(Member member) {
 		if ((this.masterSystem == null) && member.hasRole(MasterSystem.MASTER_ROLE)) {
 			this.masterSystem = member;
-			
+
 			this.getContext()
-				.actorSelection(member.address() + "/user/" + Master.DEFAULT_NAME)
-				.tell(new Master.RegistrationMessage(), this.self());
+					.actorSelection(member.address() + "/user/" + Master.DEFAULT_NAME)
+					.tell(new Master.RegistrationMessage(), this.self());
 		}
 	}
-	
+
 	private void handle(MemberRemoved message) {
 		if (this.masterSystem.equals(message.member()))
 			this.self().tell(PoisonPill.getInstance(), ActorRef.noSender());
 	}
 	
+	private void handle(PermutationsRequest request) {
+		char[] chars = convertCharSet(request.charSet);
+		Set<Hint> result = new HashSet<>();
+		Set<Integer> handledIDs = new HashSet<>();
+		Set<Integer> allIDs = new HashSet<>();
+		for (Hint hint : request.hints) {
+			allIDs.add(hint.getPersonID());
+		}
+
+		try {
+			heapPermutation(chars, chars.length, chars.length, request.hints, result, request.missingChar,
+							handledIDs, allIDs.size());
+		} catch (Finished f) {
+			//pass
+		}
+		Set<Hint> included = new HashSet<>(request.hints);
+		included.removeAll(result);
+
+		for (Hint hint : included) {
+			if (!handledIDs.contains(hint.getPersonID())) {
+				//log().info("Char {} is in password of person {}", request.missingChar, hint.getPersonID());
+				this.master.tell(new Master.IncludedChar(hint.getPersonID(), request.missingChar), this.self());
+				handledIDs.add(hint.getPersonID());
+			}
+		}
+		requestWork();
+	}
+
+	private void handle(CrackingRequest request) {
+		try {
+			crack(request.hash, request.charSet, request.length, "");
+		} catch (Finished f) {
+			String solution = f.getSolution();
+			this.sender().tell(new Master.Solution(request.personID, solution), this.self());
+		}
+		requestWork();
+	}
+
 	private String hash(String line) {
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");
 			byte[] hashedBytes = digest.digest(String.valueOf(line).getBytes("UTF-8"));
-			
+
 			StringBuffer stringBuffer = new StringBuffer();
 			for (int i = 0; i < hashedBytes.length; i++) {
 				stringBuffer.append(Integer.toString((hashedBytes[i] & 0xff) + 0x100, 16).substring(1));
 			}
 			return stringBuffer.toString();
-		}
-		catch (NoSuchAlgorithmException | UnsupportedEncodingException e) {
+		} catch (NoSuchAlgorithmException | UnsupportedEncodingException e) {
 			throw new RuntimeException(e.getMessage());
 		}
 	}
-	
-	// Generating all permutations of an array using Heap's Algorithm
-	// https://en.wikipedia.org/wiki/Heap's_algorithm
-	// https://www.geeksforgeeks.org/heaps-algorithm-for-generating-permutations/
-	private void heapPermutation(char[] a, int size, int n, List<String> l) {
-		// If size is 1, store the obtained permutation
-		if (size == 1)
-			l.add(new String(a));
+
+	private void heapPermutation(char[] a, int size, int n, Set<Hint> hints, Set<Hint> result,
+								 char missingChar, Set<Integer> excludedIDs, int persons) throws Finished {
+		if (size == 1) {
+			String permutation = new String(a);
+			for (Hint hint : hints) {
+				if (hasHash(permutation, hint.getValue())) {
+					Master.ExcludedChar message = new Master.ExcludedChar(hint.getPersonID(), missingChar,
+																			hint.getValue());
+					//log().info("Char {} is NOT in password of person {}", missingChar, hint.getPersonID());
+					this.master.tell(message, this.self());
+					result.add(hint);
+					excludedIDs.add(hint.getPersonID());
+					if (result.size() == persons) {
+						throw new Finished("");
+					}
+				}
+			}
+		}
 
 		for (int i = 0; i < size; i++) {
-			heapPermutation(a, size - 1, n, l);
+			heapPermutation(a, size - 1, n, hints, result, missingChar, excludedIDs, persons);
 
 			// If size is odd, swap first and last element
 			if (size % 2 == 1) {
@@ -141,5 +232,36 @@ public class Worker extends AbstractLoggingActor {
 				a[size - 1] = temp;
 			}
 		}
+	}
+
+	private void crack(String hash, Set<Character> charSet, int pendingChars, String prefix) {
+		if (pendingChars == 0) {
+			if (hasHash(prefix, hash)) {
+				throw new Finished(prefix);
+			}
+			return;
+		}
+
+		for (Object c : charSet.toArray()) {
+			crack(hash, charSet, pendingChars - 1, prefix + c);
+		}
+	}
+
+	private char[] convertCharSet(Set<Character> charSet) {
+		char[] chars = new char[charSet.size()];
+		List<Character> list = Arrays.asList(charSet.toArray(new Character[0]));
+		Collections.shuffle(list);
+		for (int i = 0; i < list.size(); i++) {
+			chars[i] = list.get(i);
+		}
+		return chars;
+	}
+
+	private boolean hasHash(String string, String hash) {
+		return hash.equals(hash(string));
+	}
+
+	private void requestWork() {
+		this.master.tell(new Master.WorkRequest(), this.self());
 	}
 }
