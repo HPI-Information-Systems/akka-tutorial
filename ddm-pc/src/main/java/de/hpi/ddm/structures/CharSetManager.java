@@ -18,6 +18,7 @@ public class CharSetManager {
     private final Map<Character, Pair<Set<Integer>, Set<Hint>>> solutionInfo;
     private final int batchSize;
     private int currentIndex;
+    private int incrementor;
 
     public static CharSetManager fromMessageLine(String[] line, int batchSize) {
         return new CharSetManager(line[2], batchSize);
@@ -29,6 +30,7 @@ public class CharSetManager {
         initializeSolutionInfo();
         this.batchSize = batchSize;
         this.currentIndex = 0;
+        this.incrementor = 1;
     }
 
     public void handleIncludedChar(char c, Integer personID) {
@@ -42,7 +44,7 @@ public class CharSetManager {
     public boolean hasNext() {
         boolean anySetNotCompleted = false;
         for(Character c : this.solutionInfo.keySet()) {
-            anySetNotCompleted = anySetNotCompleted || isNotCompleted(c);
+            anySetNotCompleted = anySetNotCompleted || !isCompleted(c);
         }
         return anySetNotCompleted;
     }
@@ -54,8 +56,8 @@ public class CharSetManager {
         int index = this.currentIndex;
         this.currentIndex = getNextIndex(index);
 
-        if (isNotCompleted(this.charSets.get(currentIndex).excludedChar)) {
-            return this.charSets.get(currentIndex);
+        if (!isCompleted(this.charSets.get(index).excludedChar)) {
+            return this.charSets.get(index);
         }
         return next();
     }
@@ -84,13 +86,22 @@ public class CharSetManager {
         }
     }
 
-    private boolean isNotCompleted(Character c) {
+    private boolean isCompleted(Character c) {
         Pair<Set<Integer>, Set<Hint>> solutionInfo =  this.solutionInfo.get(c);
-        return solutionInfo.getKey().size() + solutionInfo.getValue().size() < this.batchSize;
+        return solutionInfo.getKey().size() > 0 || solutionInfo.getValue().size() == this.batchSize;
     }
 
     private int getNextIndex(int current) {
-        return (current + 1) % this.charSets.size();
+        if (current + this.incrementor == this.charSets.size() || current + this.incrementor == -1) {
+            flipIterationDirection();
+            return current;
+        }
+
+        return current + this.incrementor;
+    }
+
+    private void flipIterationDirection() {
+        this.incrementor = this.incrementor * -1;
     }
 
 }

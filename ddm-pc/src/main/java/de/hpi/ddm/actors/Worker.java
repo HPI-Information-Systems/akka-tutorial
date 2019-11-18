@@ -200,6 +200,7 @@ public class Worker extends AbstractLoggingActor {
 								 char missingChar, Set<Integer> excludedIDs, int persons) throws Finished {
 		if (size == 1) {
 			String permutation = new String(a);
+			Hint hit = null;
 			for (Hint hint : hints) {
 				if (hasHash(permutation, hint.getValue())) {
 					Master.ExcludedChar message = new Master.ExcludedChar(hint.getPersonID(), missingChar,
@@ -211,9 +212,12 @@ public class Worker extends AbstractLoggingActor {
 					if (result.size() == persons) {
 						throw new Finished("");
 					}
+					hit = hint;
 				}
 			}
-		}
+			hints.remove(hit);
+			return;
+			}
 
 		for (int i = 0; i < size; i++) {
 			heapPermutation(a, size - 1, n, hints, result, missingChar, excludedIDs, persons);
