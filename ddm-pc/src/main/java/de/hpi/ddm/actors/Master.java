@@ -175,11 +175,11 @@ public class Master extends AbstractLoggingActor {
 	private void handle(Solution solution) {
 		Person person = this.persons.get(solution.personID);
 		this.completedPersons.add(solution.personID);
-		log().info("Password of person {} ({}): {}", person.getId(), person.getName(), solution.solution);
+		String message = String.format("Password of person %d (%s): %s", person.getId(), person.getName(),
+										solution.solution);
+		this.collector.tell(new Collector.CollectMessage(message), this.self());
 		this.persons.remove(person.getId());
 		if (this.persons.size() == 0) {
-			this.collector.tell(new Collector.CollectMessage(
-					"Processed batch of size " + this.batchSize), this.self());
 			this.reader.tell(new Reader.ReadMessage(), this.self());
 		}
 	}
