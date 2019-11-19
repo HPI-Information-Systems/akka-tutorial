@@ -13,7 +13,7 @@ public class Person {
 	private final String name;
 	private final int passwordLength;
 	private final Set<Character> charSet;
-	private final Set<Character> solutionSet = new HashSet<>();
+	private final Set<Character> includedChars = new HashSet<>();
 	private final Set<Character> excludedChars = new HashSet<>();
 	private final String passwordHash;
 	private final Set<Hint> hints;
@@ -30,7 +30,7 @@ public class Person {
 	}
 
 	public void addChar(char c) {
-		this.solutionSet.add(c);
+		this.includedChars.add(c);
 	}
 
 	public void dropChar(char c) {
@@ -38,15 +38,18 @@ public class Person {
 	}
 
 	public boolean isReadyForCracking() {
-		if (this.solutionSet.size() == this.solutionSize) {
-			return true;
+		return this.includedChars.size() >= this.solutionSize ||
+				this.charSet.size() - this.excludedChars.size() <= Math.max(this.solutionSize, 4);
+	}
+
+	public Set<Character> getSolutionSet() {
+		if (this.includedChars.size() >= this.solutionSize) {
+			return this.includedChars;
 		}
-		if (this.charSet.size() - this.excludedChars.size() <= Math.max(this.solutionSize, 4)) {
-			this.solutionSet.addAll(this.charSet);
-			this.solutionSet.removeAll(this.excludedChars);
-			return true;
-		}
-		return false;
+
+		Set<Character> solutionSet = new HashSet<>(this.charSet);
+		solutionSet.removeAll(this.excludedChars);
+		return solutionSet;
 	}
 
 	private static Set<Hint> getHintHashes(Integer personID, String[] list) {
