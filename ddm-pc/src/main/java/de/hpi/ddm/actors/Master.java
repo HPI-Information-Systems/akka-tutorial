@@ -177,6 +177,7 @@ public class Master extends AbstractLoggingActor {
 		this.completedPersons.add(solution.personID);
 		String message = String.format("Password of person %d (%s): %s", person.getId(), person.getName(),
 										solution.solution);
+		//log().info(message);
 		this.collector.tell(new Collector.CollectMessage(message), this.self());
 		this.persons.remove(person.getId());
 		if (this.persons.size() == 0) {

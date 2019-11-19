@@ -93,10 +93,10 @@ public class Worker extends AbstractLoggingActor {
 	// Actor Behavior //
 	////////////////////
 
-	@Getter @AllArgsConstructor
+	@Getter @AllArgsConstructor @NoArgsConstructor
 	private static class Finished extends Error {
 		private static final long serialVersionUID = -6952413878046495269L;
-		private final String solution;
+		private String solution;
 	}
 
 	@Override
@@ -145,7 +145,6 @@ public class Worker extends AbstractLoggingActor {
 	
 	private void handle(PermutationsRequest request) {
 		char[] chars = convertCharSet(request.charSet);
-		Set<Hint> result = new HashSet<>();
 		Set<Integer> handledIDs = new HashSet<>();
 		Set<Integer> allIDs = new HashSet<>();
 		for (Hint hint : request.hints) {
@@ -153,20 +152,17 @@ public class Worker extends AbstractLoggingActor {
 		}
 
 		try {
-			heapPermutation(chars, chars.length, chars.length, request.hints, result, request.missingChar,
+			heapPermutation(chars, chars.length, chars.length, request.hints, request.missingChar,
 							handledIDs, allIDs.size());
 		} catch (Finished f) {
 			//pass
 		}
-		Set<Hint> included = new HashSet<>(request.hints);
-		included.removeAll(result);
+		Set<Integer> included = new HashSet<>(allIDs);
+		included.removeAll(handledIDs);
 
-		for (Hint hint : included) {
-			if (!handledIDs.contains(hint.getPersonID())) {
-				//log().info("Char {} is in password of person {}", request.missingChar, hint.getPersonID());
-				this.master.tell(new Master.IncludedChar(hint.getPersonID(), request.missingChar), this.self());
-				handledIDs.add(hint.getPersonID());
-			}
+		for (Integer personID : included) {
+			//log().info("Char {} is in password of person {}", request.missingChar, hint.getPersonID());
+			this.master.tell(new Master.IncludedChar(personID, request.missingChar), this.self());
 		}
 		requestWork();
 	}
@@ -196,31 +192,30 @@ public class Worker extends AbstractLoggingActor {
 		}
 	}
 
-	private void heapPermutation(char[] a, int size, int n, Set<Hint> hints, Set<Hint> result,
-								 char missingChar, Set<Integer> excludedIDs, int persons) throws Finished {
+	private void heapPermutation(char[] a, int size, int n, Set<Hint> hints, char missingChar,
+								 Set<Integer> excludedIDs, int persons) throws Finished {
 		if (size == 1) {
 			String permutation = new String(a);
-			Hint hit = null;
+			Integer personID = null;
 			for (Hint hint : hints) {
 				if (hasHash(permutation, hint.getValue())) {
 					Master.ExcludedChar message = new Master.ExcludedChar(hint.getPersonID(), missingChar,
 																			hint.getValue());
 					//log().info("Char {} is NOT in password of person {}", missingChar, hint.getPersonID());
 					this.master.tell(message, this.self());
-					result.add(hint);
 					excludedIDs.add(hint.getPersonID());
-					if (result.size() == persons) {
-						throw new Finished("");
+					if (excludedIDs.size() == persons) {
+						throw new Finished();
 					}
-					hit = hint;
+					personID = hint.getPersonID();
 				}
 			}
-			hints.remove(hit);
+			pruneHints(personID, hints);
 			return;
 			}
 
 		for (int i = 0; i < size; i++) {
-			heapPermutation(a, size - 1, n, hints, result, missingChar, excludedIDs, persons);
+			heapPermutation(a, size - 1, n, hints, missingChar, excludedIDs, persons);
 
 			// If size is odd, swap first and last element
 			if (size % 2 == 1) {
@@ -268,4 +263,20 @@ public class Worker extends AbstractLoggingActor {
 	private void requestWork() {
 		this.master.tell(new Master.WorkRequest(), this.self());
 	}
+
+	private void pruneHints(Integer personID, Set<Hint> hints) {
+		if (personID == null) {
+			return;
+		}
+
+		Set<Hint> toExclude = new HashSet<>();
+		for (Hint hint : hints) {
+			if (hint.getPersonID().equals(personID)) {
+				toExclude.add(hint);
+			}
+		}
+
+		hints.removeAll(toExclude);
+	}
+
 }
