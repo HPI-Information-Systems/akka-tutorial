@@ -1,8 +1,9 @@
 package de.hpi.ddm.structures;
 
-import javafx.util.Pair;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
+import lombok.Setter;
+import org.apache.commons.math3.util.CombinatoricsUtils;
 
 import java.util.*;
 
@@ -14,52 +15,138 @@ public class CharSetManager {
         private final Character excludedChar;
     }
 
-    private final List<CharSet> charSets;
-    private final Map<Character, Pair<Set<Integer>, Set<Hint>>> solutionInfo;
-    private final int batchSize;
-    private int currentIndex;
-    private int incrementor;
+    private static class ChunkQueue {
+        private Queue<PermutationChunk> queue = new LinkedList<>();
+        @Getter @Setter private boolean requested = false;
+        private int deliveredChunks = 0;
+        private Set<Integer> excludedPersons = new HashSet<>();
+        private final int batchSize;
+        private final int chunkCount;
 
-    public static CharSetManager fromMessageLine(String[] line, int batchSize) {
-        return new CharSetManager(line[2], batchSize);
+        ChunkQueue(int batchSize, int chunkCount) {
+            this.batchSize = batchSize;
+            this.chunkCount = chunkCount;
+        }
+
+        void push(PermutationChunk chunk) {
+            if(!isFinished()) {
+                this.queue.add(chunk);
+            }
+        }
+
+        PermutationChunk pop() {
+            return this.queue.remove();
+        }
+
+        void ack() {
+            this.deliveredChunks++;
+            checkFinish();
+        }
+
+        void exclude(Integer personID) {
+            this.excludedPersons.add(personID);
+            checkFinish();
+        }
+
+        boolean isFinished() {
+            return this.deliveredChunks == chunkCount || this.excludedPersons.size() == this.batchSize;
+        }
+
+        boolean hasNext() {
+            return !this.queue.isEmpty();
+        }
+
+        Set<Integer> includingPersons(Set<Integer> allIDs) {
+            Set<Integer> result = new HashSet<>(allIDs);
+            result.removeAll(this.excludedPersons);
+            return result;
+        }
+
+        public boolean hadHashFor(Integer personID) {
+            return this.excludedPersons.contains(personID);
+        }
+
+        private void checkFinish() {
+            if(isFinished()) {
+                this.queue = new LinkedList<>();
+            }
+        }
     }
 
-    private CharSetManager(String chars, int batchSize) {
+    private final Queue<CharSet> charSets;
+    private final Set<Integer> personIDs;
+    private final Map<Character, ChunkQueue> queues;
+    @Getter private boolean busy = false;
+
+    public static CharSetManager fromMessageLine(String[] line, Set<Integer> personIDs) {
+        return new CharSetManager(line[2], personIDs);
+    }
+
+    private CharSetManager(String chars, Set<Integer> personIDs) {
         this.charSets = generateSubsets(parseChars(chars));
-        this.solutionInfo = new HashMap<>();
-        initializeSolutionInfo();
-        this.batchSize = batchSize;
-        this.currentIndex = 0;
-        this.incrementor = 1;
+        this.personIDs = personIDs;
+        this.queues = initializeQueues(personIDs.size(),  getChunkCount(chars.length() - 1));
     }
 
-    public void handleIncludedChar(char c, Integer personID) {
-        this.solutionInfo.get(c).getKey().add(personID);
+    public void handleExcludedChar(char c, Integer personID) {
+        this.queues.get(c).exclude(personID);
+        this.busy = !this.queues.get(c).isFinished();
     }
 
-    public void handleExcludedChar(char c, Integer personID, String hash) {
-        this.solutionInfo.get(c).getValue().add(new Hint(personID, hash));
+    public void handleChunkFinish(char c) {
+        this.queues.get(c).ack();
+        this.busy = !this.queues.get(c).isFinished();
     }
 
-    public boolean hasNext() {
-        boolean anySetNotCompleted = false;
-        for(Character c : this.solutionInfo.keySet()) {
-            anySetNotCompleted = anySetNotCompleted || !isCompleted(c);
+    public boolean hasNextCharSet() {
+        return !this.charSets.isEmpty();
+    }
+
+    public CharSet nextCharSet() throws NoSuchElementException {
+        this.busy = true;
+        return this.charSets.remove();
+    }
+
+    public boolean hasNextChunk() {
+        boolean result = false;
+        for (ChunkQueue queue : this.queues.values()) {
+            result = result || !queue.isFinished() && queue.hasNext();
         }
-        return anySetNotCompleted;
+        return result;
     }
 
-    public CharSet next() throws IndexOutOfBoundsException {
-        if (!hasNext()) {
-            throw new IndexOutOfBoundsException("No more CharSets left");
+    public PermutationChunk nextChunk() throws NoSuchElementException {
+        for(ChunkQueue queue : this.queues.values()) {
+            if(!queue.isFinished() && queue.hasNext()) {
+                return queue.pop();
+            }
         }
-        int index = this.currentIndex;
-        this.currentIndex = getNextIndex(index);
+        throw new NoSuchElementException("No chunks available");
+    }
 
-        if (!isCompleted(this.charSets.get(index).excludedChar)) {
-            return this.charSets.get(index);
+    public boolean allAreFinished() {
+        boolean result = true;
+        for (ChunkQueue queue : this.queues.values()) {
+            result = result && queue.isFinished();
         }
-        return next();
+        return result;
+
+    }
+
+    public void add(PermutationChunk chunk) {
+        this.queues.get(chunk.getMissingChar()).push(chunk);
+    }
+
+    public boolean isFinished(char c) {
+        return this.queues.get(c).isFinished();
+    }
+
+    public Set<Integer> personsIncluding(char c) {
+        return this.queues.get(c).includingPersons(this.personIDs);
+    }
+
+    public boolean hadHashFor(Integer personID, Character c) {
+        return this.queues.get(c).hadHashFor(personID);
     }
 
     public static Set<Character> parseChars(String string) {
@@ -70,8 +157,8 @@ public class CharSetManager {
         return set;
     }
 
-    private static List<CharSet> generateSubsets(Set<Character> chars) {
-        List<CharSet> charSets = new LinkedList<>();
+    private static Queue<CharSet> generateSubsets(Set<Character> chars) {
+        Queue<CharSet> charSets = new LinkedList<>();
         for (Character c : chars) {
             Set<Character> set = new HashSet<>(chars);
             set.remove(c);
@@ -80,28 +167,16 @@ public class CharSetManager {
         return charSets;
     }
 
-    private void initializeSolutionInfo() {
-        for(CharSet charSet : this.charSets) {
-            this.solutionInfo.put(charSet.excludedChar, new Pair<>(new HashSet<>(), new HashSet<>()));
+    private Map<Character, ChunkQueue> initializeQueues(int batchSize, int chunkCount) {
+        Map<Character, ChunkQueue> queues = new HashMap<>();
+        for (CharSet charSet : this.charSets) {
+            queues.put(charSet.excludedChar, new ChunkQueue(batchSize, chunkCount));
         }
+        return queues;
     }
 
-    private boolean isCompleted(Character c) {
-        Pair<Set<Integer>, Set<Hint>> solutionInfo =  this.solutionInfo.get(c);
-        return solutionInfo.getKey().size() > 0 || solutionInfo.getValue().size() == this.batchSize;
-    }
-
-    private int getNextIndex(int current) {
-        if (current + this.incrementor == this.charSets.size() || current + this.incrementor == -1) {
-            flipIterationDirection();
-            return current;
-        }
-
-        return current + this.incrementor;
-    }
-
-    private void flipIterationDirection() {
-        this.incrementor = this.incrementor * -1;
+    private int getChunkCount(int charSetSize) {
+        return (int) Math.ceil(CombinatoricsUtils.factorial(charSetSize) / (double) PermutationChunk.MAX_SIZE);
     }
 
 }

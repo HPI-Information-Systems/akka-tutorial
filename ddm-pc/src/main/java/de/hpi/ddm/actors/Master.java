@@ -3,6 +3,7 @@ package de.hpi.ddm.actors;
 import akka.actor.*;
 import de.hpi.ddm.structures.CharSetManager;
 import de.hpi.ddm.structures.Hint;
+import de.hpi.ddm.structures.PermutationChunk;
 import de.hpi.ddm.structures.Person;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -24,6 +25,7 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	public Master(final ActorRef reader, final ActorRef collector) {
+		this.batchNumber = 0;
 		this.reader = reader;
 		this.collector = collector;
 		this.workers = new ArrayList<>();
@@ -62,13 +64,14 @@ public class Master extends AbstractLoggingActor {
 		private Integer personID;
 		private char value;
 		private String hash;
+		private int batchNumber;
 	}
 
 	@Data @NoArgsConstructor @AllArgsConstructor
-	public static class IncludedChar implements Serializable {
+	public static class CompletedChunk implements Serializable {
 		private static final long serialVersionUID = 2424969000764642610L;
-		private Integer personID;
-		private char value;
+		private char missingChar;
+		private int batchNumber;
 	}
 
 	@Data @NoArgsConstructor @AllArgsConstructor
@@ -86,8 +89,8 @@ public class Master extends AbstractLoggingActor {
 	private final ActorRef collector;
 	private final List<ActorRef> workers;
 	private final Set<Integer> completedPersons;
-	private int batchSize;
 	private Set<ActorRef> waitingWorkers;
+	private int batchNumber;
 
 	private long startTime;
 	private Map<Integer, Person> persons;
@@ -113,14 +116,14 @@ public class Master extends AbstractLoggingActor {
 				.match(BatchMessage.class, this::handle)
 				.match(WorkRequest.class, this::handle)
 				.match(ExcludedChar.class, this::handle)
-				.match(IncludedChar.class, this::handle)
+				.match(PermutationChunk.class, this::handle)
+				.match(CompletedChunk.class, this::handle)
 				.match(Solution.class, this::handle)
 				.match(Terminated.class, this::handle)
 				.match(RegistrationMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
-
 
 	protected void handle(StartMessage message) {
 		this.startTime = System.currentTimeMillis();
@@ -134,9 +137,9 @@ public class Master extends AbstractLoggingActor {
 			return;
 		}
 
-		this.batchSize = message.getLines().size();
-		this.charSetManager = CharSetManager.fromMessageLine(message.lines.get(0), this.batchSize);
 		this.persons = parseLines(message.lines);
+		this.batchNumber++;
+		this.charSetManager = CharSetManager.fromMessageLine(message.lines.get(0), this.persons.keySet());
 		distributeWork();
 	}
 
@@ -150,25 +153,35 @@ public class Master extends AbstractLoggingActor {
 		distributeWork();
 	}
 
+	private void handle(PermutationChunk chunk) {
+		this.charSetManager.add(chunk);
+	}
+
 	private void handle(ExcludedChar excludedChar) {
-		if (!this.completedPersons.contains(excludedChar.personID)) {
-			this.charSetManager.handleExcludedChar(excludedChar.value, excludedChar.personID, excludedChar.hash);
-			Person person = this.persons.get(excludedChar.personID);
-			person.dropChar(excludedChar.value);
-			for (Hint hint : person.getHints()) {
-				if(hint.getValue().equals(excludedChar.hash)) {
-					person.getHints().remove(hint);
-					return;
-				}
+		if (this.completedPersons.contains(excludedChar.personID) || excludedChar.batchNumber != this.batchNumber) {
+			return;
+		}
+		this.charSetManager.handleExcludedChar(excludedChar.value, excludedChar.personID);
+		Person person = this.persons.get(excludedChar.personID);
+		person.dropChar(excludedChar.value);
+		for (Hint hint : person.getHints()) {
+			if(hint.getValue().equals(excludedChar.hash)) {
+				person.getHints().remove(hint);
+				return;
 			}
 		}
 	}
 
-	private void handle(IncludedChar includedChar) {
-		if (!this.completedPersons.contains(includedChar.personID)) {
-			this.charSetManager.handleIncludedChar(includedChar.value, includedChar.personID);
-			Person person = this.persons.get(includedChar.personID);
-			person.addChar(includedChar.value);
+	private void handle(CompletedChunk chunk) {
+		if (chunk.batchNumber != this.batchNumber) {
+			return;
+		}
+
+		this.charSetManager.handleChunkFinish(chunk.missingChar);
+		if (this.charSetManager.isFinished(chunk.missingChar)) {
+			for (Integer personID : this.charSetManager.personsIncluding(chunk.missingChar)) {
+				this.persons.get(personID).addChar(chunk.missingChar);
+			}
 		}
 	}
 
@@ -230,12 +243,23 @@ public class Master extends AbstractLoggingActor {
 				return;
 			}
 		}
-		if (this.persons.size() > 0 && this.charSetManager.hasNext()) {
+
+		if (this.persons.size() > 0 && this.charSetManager.hasNextChunk()  && !this.charSetManager.allAreFinished()) {
 			try {
-				sendHints(worker, collectHints());
+				sendHintResolveRequest(worker);
 				return;
 			}
-			catch (IndexOutOfBoundsException e) {
+			catch (NoSuchElementException e) {
+				// pass
+			}
+		}
+
+		if (this.persons.size() > 0 && !this.charSetManager.isBusy() && this.charSetManager.hasNextCharSet()) {
+			try {
+				sendPermutationsRequest(worker);
+				return;
+			}
+			catch (NoSuchElementException e) {
 				// pass
 			}
 		}
@@ -243,10 +267,9 @@ public class Master extends AbstractLoggingActor {
 		this.waitingWorkers.add(worker);
 	}
 
-	private void sendHints(ActorRef worker, Set<Hint> hints) {
-		CharSetManager.CharSet charSet = this.charSetManager.next();
+	private void sendPermutationsRequest(ActorRef worker) {
+		CharSetManager.CharSet charSet = this.charSetManager.nextCharSet();
 		Worker.PermutationsRequest request = new Worker.PermutationsRequest(
-				hints,
 				charSet.getSet(),
 				charSet.getExcludedChar());
 		worker.tell(request, this.self());
@@ -262,6 +285,13 @@ public class Master extends AbstractLoggingActor {
 		person.setBeingCracked(true);
 	}
 
+	private void sendHintResolveRequest(ActorRef worker) {
+		PermutationChunk chunk = this.charSetManager.nextChunk();
+		Set<Hint> hints = collectHints(chunk.getMissingChar());
+		Worker.HintSolvingRequest request = new Worker.HintSolvingRequest(chunk, hints, this.batchNumber);
+		worker.tell(request, this.self());
+	}
+
 	private void distributeWork() {
 		Set<ActorRef> workers = new HashSet<>(this.waitingWorkers);
 		for (ActorRef worker : workers) {
@@ -270,10 +300,10 @@ public class Master extends AbstractLoggingActor {
 		}
 	}
 
-	private Set<Hint> collectHints() {
+	private Set<Hint> collectHints(Character c) {
 		Set<Hint> result = new HashSet<>();
 		for (Map.Entry<Integer, Person> person : this.persons.entrySet()) {
-			if (!person.getValue().isBeingCracked()) {
+			if (!person.getValue().isBeingCracked() && !this.charSetManager.hadHashFor(person.getKey(), c)) {
 				result.addAll(person.getValue().getHints());
 			}
 		}

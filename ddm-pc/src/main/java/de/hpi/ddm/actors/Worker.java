@@ -1,9 +1,6 @@
 package de.hpi.ddm.actors;
 
-import akka.actor.AbstractLoggingActor;
-import akka.actor.ActorRef;
-import akka.actor.PoisonPill;
-import akka.actor.Props;
+import akka.actor.*;
 import akka.cluster.Cluster;
 import akka.cluster.ClusterEvent.CurrentClusterState;
 import akka.cluster.ClusterEvent.MemberRemoved;
@@ -11,7 +8,9 @@ import akka.cluster.ClusterEvent.MemberUp;
 import akka.cluster.Member;
 import akka.cluster.MemberStatus;
 import de.hpi.ddm.MasterSystem;
+import de.hpi.ddm.structures.ChunkManager;
 import de.hpi.ddm.structures.Hint;
+import de.hpi.ddm.structures.PermutationChunk;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.Getter;
@@ -51,9 +50,16 @@ public class Worker extends AbstractLoggingActor {
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class PermutationsRequest implements Serializable {
 		private static final long serialVersionUID = 2767978393215113993L;
-		private Set<Hint> hints;
 		private Set<Character> charSet;
 		private Character missingChar;
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class HintSolvingRequest implements Serializable {
+		private static final long serialVersionUID = 7471763615108065806L;
+		private PermutationChunk chunk;
+		private Set<Hint> hints;
+		private int batchNumber;
 	}
 
 	@Data @NoArgsConstructor @AllArgsConstructor
@@ -72,6 +78,8 @@ public class Worker extends AbstractLoggingActor {
 	private Member masterSystem;
 	private final Cluster cluster;
 	private ActorRef master;
+
+
 
 	/////////////////////
 	// Actor Lifecycle //
@@ -107,6 +115,7 @@ public class Worker extends AbstractLoggingActor {
 				.match(MasterHello.class, this::handle)
 				.match(MemberRemoved.class, this::handle)
 				.match(PermutationsRequest.class, this::handle)
+				.match(HintSolvingRequest.class, this::handle)
 				.match(CrackingRequest.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
@@ -145,25 +154,16 @@ public class Worker extends AbstractLoggingActor {
 	
 	private void handle(PermutationsRequest request) {
 		char[] chars = convertCharSet(request.charSet);
-		Set<Integer> handledIDs = new HashSet<>();
-		Set<Integer> allIDs = new HashSet<>();
-		for (Hint hint : request.hints) {
-			allIDs.add(hint.getPersonID());
-		}
+		ChunkManager chunkManager = new ChunkManager(this.sender(), this.self(),
+														request.missingChar, new LinkedList<>());
+		heapPermutation(chars, chars.length, chars.length, chunkManager);
+		chunkManager.flush();
+		requestWork();
+	}
 
-		try {
-			heapPermutation(chars, chars.length, chars.length, request.hints, request.missingChar,
-							handledIDs, allIDs.size());
-		} catch (Finished f) {
-			//pass
-		}
-		Set<Integer> included = new HashSet<>(allIDs);
-		included.removeAll(handledIDs);
-
-		for (Integer personID : included) {
-			//log().info("Char {} is in password of person {}", request.missingChar, hint.getPersonID());
-			this.master.tell(new Master.IncludedChar(personID, request.missingChar), this.self());
-		}
+	private void handle(HintSolvingRequest request) {
+		hashAndCompare(request.chunk, request.hints, request.batchNumber);
+		this.sender().tell(new Master.CompletedChunk(request.chunk.getMissingChar(), request.batchNumber), this.self());
 		requestWork();
 	}
 
@@ -192,30 +192,14 @@ public class Worker extends AbstractLoggingActor {
 		}
 	}
 
-	private void heapPermutation(char[] a, int size, int n, Set<Hint> hints, char missingChar,
-								 Set<Integer> excludedIDs, int persons) throws Finished {
+	private void heapPermutation(char[] a, int size, int n, ChunkManager chunkManager) {
 		if (size == 1) {
-			String permutation = new String(a);
-			Integer personID = null;
-			for (Hint hint : hints) {
-				if (hasHash(permutation, hint.getValue())) {
-					Master.ExcludedChar message = new Master.ExcludedChar(hint.getPersonID(), missingChar,
-																			hint.getValue());
-					//log().info("Char {} is NOT in password of person {}", missingChar, hint.getPersonID());
-					this.master.tell(message, this.self());
-					excludedIDs.add(hint.getPersonID());
-					if (excludedIDs.size() == persons) {
-						throw new Finished();
-					}
-					personID = hint.getPersonID();
-				}
-			}
-			pruneHints(personID, hints);
+			chunkManager.add(new String(a));
 			return;
-			}
+		}
 
 		for (int i = 0; i < size; i++) {
-			heapPermutation(a, size - 1, n, hints, missingChar, excludedIDs, persons);
+			heapPermutation(a, size - 1, n, chunkManager);
 
 			// If size is odd, swap first and last element
 			if (size % 2 == 1) {
@@ -232,6 +216,23 @@ public class Worker extends AbstractLoggingActor {
 			}
 		}
 	}
+
+	private void hashAndCompare(PermutationChunk chunk, Set<Hint> hints, int batchNumber) {
+		for (String permutation : chunk.getPermutations()) {
+			Integer personID = null;
+			for (Hint hint : hints) {
+				if (hasHash(permutation, hint.getValue())) {
+					Master.ExcludedChar message = new Master.ExcludedChar(hint.getPersonID(), chunk.getMissingChar(),
+							hint.getValue(), batchNumber);
+					//log().info("Char {} is NOT in password of person {}", chunk.getMissingChar(), hint.getPersonID());
+					this.master.tell(message, this.self());
+					personID = hint.getPersonID();
+				}
+			}
+			pruneHints(personID, hints);
+		}
+	}
+
 
 	private void crack(String hash, Set<Character> charSet, int pendingChars, String prefix) {
 		if (pendingChars == 0) {
