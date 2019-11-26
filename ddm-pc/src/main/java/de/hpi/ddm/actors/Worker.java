@@ -220,8 +220,9 @@ public class Worker extends AbstractLoggingActor {
 	private void hashAndCompare(PermutationChunk chunk, Set<Hint> hints, int batchNumber) {
 		for (String permutation : chunk.getPermutations()) {
 			Integer personID = null;
+			String hash = hash(permutation);
 			for (Hint hint : hints) {
-				if (hasHash(permutation, hint.getValue())) {
+				if (hash.equals(hint.getValue())) {
 					Master.ExcludedChar message = new Master.ExcludedChar(hint.getPersonID(), chunk.getMissingChar(),
 							hint.getValue(), batchNumber);
 					//log().info("Char {} is NOT in password of person {}", chunk.getMissingChar(), hint.getPersonID());
