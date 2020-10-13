@@ -19,7 +19,7 @@
 		<mockito-all.version>1.9.5</mockito-all.version>
 		<fastutil.version>8.2.2</fastutil.version>
 		<opencsv.version>4.1</opencsv.version>
-		<junit.version>4.12</junit.version>
+		<junit.version>4.13.1</junit.version>
 	</properties>
 
 	<dependencies>
