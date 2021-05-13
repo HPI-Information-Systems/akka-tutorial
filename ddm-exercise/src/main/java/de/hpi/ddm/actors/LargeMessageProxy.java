@@ -1,17 +1,18 @@
 package de.hpi.ddm.actors;
 
 import java.io.Serializable;
+import java.util.Arrays;
+
+import com.twitter.chill.KryoPool;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
 import akka.actor.ActorSelection;
 import akka.actor.Props;
+import de.hpi.ddm.singletons.KryoPoolSingleton;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-
-import com.twitter.chill.KryoPool;
-import de.hpi.ddm.singletons.KryoPoolSingleton;
 
 public class LargeMessageProxy extends AbstractLoggingActor {
 
@@ -49,6 +50,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	/////////////////
 	private byte[] received = new byte[0];
 	private ActorRef receiver = null;
+	private ActorRef sender = null;
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -62,7 +64,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	public Receive createReceive() {
 		return receiveBuilder()
 				.match(LargeMessage.class, this::handleLargeMessage)
-				.match(ActorRef.class, this::handleReceiver)
+				.match(ActorRef[].class, this::handleCommPartners)
 				.match(byte[].class, this::handlePart)
 				.match(Boolean.class, this::handleDone)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
@@ -72,11 +74,13 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 
         byte[][] ret = new byte[(int)Math.ceil(source.length / (double)chunksize)][chunksize];
 
-        int start = 0;
+        // int start = 0;
 
         for(int i = 0; i < ret.length; i++) {
-            ret[i] = Arrays.copyOfRange(source,start, start + chunksize);
-            start += chunksize ;
+			int end = i == ret.length ? source.length : (i+1) * chunksize;
+            ret[i] = Arrays.copyOfRange(source, i * chunksize, end);
+            // ret[i] = Arrays.toBytesWithClass(source,start, start + chunksize);
+           // start += chunksize ;
         }
 
         return ret;
@@ -88,10 +92,10 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		ActorRef receiver = largeMessage.getReceiver();
 		ActorSelection receiverProxy = this.context().actorSelection(receiver.path().child(DEFAULT_NAME));
 
-		receiverProxy.tell(receiver, this.self());
+		receiverProxy.tell(new ActorRef[]{sender, receiver}, this.self());
 
 		KryoPool kryo = KryoPoolSingleton.get();
-		byte[] all = kryo.serialize(message);
+		byte[] all = kryo.toBytesWithClass(message);
 		byte[][] parts = this.divideArray(all, 1024);
 
 		for (byte[] part : parts) {
@@ -104,18 +108,19 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	private void handlePart(byte[] part) {
 		byte[] old = this.received;
 		this.received = new byte[old.length + part.length];
-		System.arraycopy(old, 0, this.recieved, 0);
-		System.arraycopy(part, 0, this.recieved, old.length);
+		System.arraycopy(old, 0, this.received, 0, old.length);
+		System.arraycopy(part, 0, this.received, old.length, part.length);
 	}
 
-	private void handleReceiver(ActorRef receiver) {
-		this.receiver = receiver;
+	private void handleCommPartners(ActorRef[] commPartners) {
+		this.sender = commPartners[0];
+		this.receiver = commPartners[1];
 	}
 
 	private void handleDone(boolean tirggerForward) {
 		KryoPool kryo = KryoPoolSingleton.get();
 
-		message.getReceiver().tell(kryo.deserialize(this.received), this.receiver);
+		this.receiver.tell(kryo.fromBytes(this.received), this.sender);
 		this.received = new byte[0];
 		this.receiver = null;
 	}
