@@ -10,6 +10,9 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import com.twitter.chill.KryoPool;
+import de.hpi.ddm.singletons.KryoPoolSingleton;
+
 public class LargeMessageProxy extends AbstractLoggingActor {
 
 	////////////////////////
@@ -44,6 +47,8 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	/////////////////
 	// Actor State //
 	/////////////////
+	private byte[] received = new byte[0];
+	private ActorRef receiver = null;
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -56,36 +61,62 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
-				.match(LargeMessage.class, this::handle)
-				.match(BytesMessage.class, this::handle)
+				.match(LargeMessage.class, this::handleLargeMessage)
+				.match(ActorRef.class, this::handleReceiver)
+				.match(byte[].class, this::handlePart)
+				.match(Boolean.class, this::handleDone)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
+	private byte[][] divideArray(byte[] source, int chunksize) {
 
-	private void handle(LargeMessage<?> largeMessage) {
+        byte[][] ret = new byte[(int)Math.ceil(source.length / (double)chunksize)][chunksize];
+
+        int start = 0;
+
+        for(int i = 0; i < ret.length; i++) {
+            ret[i] = Arrays.copyOfRange(source,start, start + chunksize);
+            start += chunksize ;
+        }
+
+        return ret;
+    }
+
+	private void handleLargeMessage(LargeMessage<?> largeMessage) {
 		Object message = largeMessage.getMessage();
 		ActorRef sender = this.sender();
 		ActorRef receiver = largeMessage.getReceiver();
 		ActorSelection receiverProxy = this.context().actorSelection(receiver.path().child(DEFAULT_NAME));
-		
-		// TODO: Implement a protocol that transmits the potentially very large message object.
-		// The following code sends the entire message wrapped in a BytesMessage, which will definitely fail in a distributed setting if the message is large!
-		// Solution options:
-		// a) Split the message into smaller batches of fixed size and send the batches via ...
-		//    a.a) self-build send-and-ack protocol (see Master/Worker pull propagation), or
-		//    a.b) Akka streaming using the streams build-in backpressure mechanisms.
-		// b) Send the entire message via Akka's http client-server component.
-		// c) Other ideas ...
-		// Hints for splitting:
-		// - To split an object, serialize it into a byte array and then send the byte array range-by-range (tip: try "KryoPoolSingleton.get()").
-		// - If you serialize a message manually and send it, it will, of course, be serialized again by Akka's message passing subsystem.
-		// - But: Good, language-dependent serializers (such as kryo) are aware of byte arrays so that their serialization is very effective w.r.t. serialization time and size of serialized data.
-		receiverProxy.tell(new BytesMessage<>(message, sender, receiver), this.self());
+
+		receiverProxy.tell(receiver, this.self());
+
+		KryoPool kryo = KryoPoolSingleton.get();
+		byte[] all = kryo.serialize(message);
+		byte[][] parts = this.divideArray(all, 1024);
+
+		for (byte[] part : parts) {
+			receiverProxy.tell(part, this.self());
+		}
+
+		receiverProxy.tell(true, this.self());
 	}
 
-	private void handle(BytesMessage<?> message) {
-		// TODO: With option a): Store the message, ask for the next chunk and, if all chunks are present, reassemble the message's content, deserialize it and pass it to the receiver.
-		// The following code assumes that the transmitted bytes are the original message, which they shouldn't be in your proper implementation ;-)
-		message.getReceiver().tell(message.getBytes(), message.getSender());
+	private void handlePart(byte[] part) {
+		byte[] old = this.received;
+		this.received = new byte[old.length + part.length];
+		System.arraycopy(old, 0, this.recieved, 0);
+		System.arraycopy(part, 0, this.recieved, old.length);
+	}
+
+	private void handleReceiver(ActorRef receiver) {
+		this.receiver = receiver;
+	}
+
+	private void handleDone(boolean tirggerForward) {
+		KryoPool kryo = KryoPoolSingleton.get();
+
+		message.getReceiver().tell(kryo.deserialize(this.received), this.receiver);
+		this.received = new byte[0];
+		this.receiver = null;
 	}
 }
