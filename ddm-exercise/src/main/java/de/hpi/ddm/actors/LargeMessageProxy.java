@@ -118,7 +118,5 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		KryoPool kryo = KryoPoolSingleton.get();
 
 		this.receiver.tell(kryo.fromBytes(this.received), this.sender);
-		this.received = new byte[0];
-		this.receiver = null;
 	}
 }
