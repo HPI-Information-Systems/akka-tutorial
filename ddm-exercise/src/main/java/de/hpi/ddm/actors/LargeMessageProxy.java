@@ -74,13 +74,10 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 
         byte[][] ret = new byte[(int)Math.ceil(source.length / (double)chunksize)][chunksize];
 
-        // int start = 0;
 
         for(int i = 0; i < ret.length; i++) {
 			int end = i == ret.length ? source.length : (i+1) * chunksize;
             ret[i] = Arrays.copyOfRange(source, i * chunksize, end);
-            // ret[i] = Arrays.toBytesWithClass(source,start, start + chunksize);
-           // start += chunksize ;
         }
 
         return ret;
