@@ -73,7 +73,7 @@ public class Configuration {
                     throw new AssertionError();
             }
         } catch (ParameterException e) {
-            System.out.printf("Could not parse args: %s\n", e.getMessage());
+            System.err.printf("Could not parse args: %s\n", e.getMessage());
             jCommander.usage();
             System.exit(1);
         }

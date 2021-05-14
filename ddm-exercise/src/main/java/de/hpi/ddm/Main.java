@@ -10,10 +10,10 @@ public class Main {
 	public static void main(String[] args) throws Exception {
 		Configuration conf = ConfigurationSingleton.get();
 		conf.updateWith(args);
-		
+
 		if (conf.getRole().equals(MasterSystem.MASTER_ROLE))
-	        MasterSystem.start();
-	    else
-	        WorkerSystem.start();
+			MasterSystem.start();
+		else
+			WorkerSystem.start();
 	}
 }
