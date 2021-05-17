@@ -4,6 +4,7 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Random;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
@@ -43,11 +44,18 @@ public class Master extends AbstractLoggingActor {
 	public static class StartMessage implements Serializable {
 		private static final long serialVersionUID = -50374816448627600L;
 	}
-	
+
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class BatchMessage implements Serializable {
 		private static final long serialVersionUID = 8343040942748609598L;
 		private List<String[]> lines;
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class ResultsMessage implements Serializable {
+		private static final long serialVersionUID = 6194489711561811313L;
+		private String[] line;
+		private String password;
 	}
 
 	@Data
@@ -87,7 +95,8 @@ public class Master extends AbstractLoggingActor {
 				.match(BatchMessage.class, this::handle)
 				.match(Terminated.class, this::handle)
 				.match(RegistrationMessage.class, this::handle)
-				// TODO: Add further messages here to share work between Master and Worker actors
+				.match(ResultsMessage.class, this::handle)
+				.match(Worker.CrackHintMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -99,7 +108,7 @@ public class Master extends AbstractLoggingActor {
 	}
 	
 	protected void handle(BatchMessage message) {
-		
+
 		// TODO: This is where the task begins:
 		// - The Master received the first batch of input records.
 		// - To receive the next batch, we need to send another ReadMessage to the reader.
@@ -121,17 +130,27 @@ public class Master extends AbstractLoggingActor {
 		}
 		
 		// TODO: Process the lines with the help of the worker actors
-		for (String[] line : message.getLines())
-			this.log().error("Need help processing: {}", Arrays.toString(line));
-		
-		// TODO: Send (partial) results to the Collector
-		this.collector.tell(new Collector.CollectMessage("If I had results, this would be one."), this.self());
+		for (String[] line : message.getLines()) {
+			int workerIndex = new Random().nextInt(this.workers.size());
+			this.workers.get(workerIndex).tell(new Worker.CrackBatchMessage(line), this.self());
+		}
 		
 		// TODO: Fetch further lines from the Reader
 		this.reader.tell(new Reader.ReadMessage(), this.self());
 		
 	}
-	
+
+	protected void handle(ResultsMessage message) {
+		// TODO: Send (partial) results to the Collector
+		message.line[0] = message.password;
+		this.collector.tell(new Collector.CollectMessage(Arrays.toString(message.line)), this.self());
+	}
+
+	protected void handle(Worker.CrackHintMessage message){
+		int workerIndex = new Random().nextInt(this.workers.size());
+		this.workers.get(workerIndex).tell(message, this.self());
+	}
+
 	protected void terminate() {
 		this.collector.tell(new Collector.PrintMessage(), this.self());
 		
