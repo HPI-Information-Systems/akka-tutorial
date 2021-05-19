@@ -7,6 +7,8 @@ import java.util.Arrays;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.HashMap;
 import java.util.Map.Entry;
+import java.util.zip.DeflaterOutputStream;
+import java.util.zip.InflaterOutputStream;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
@@ -153,7 +155,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 				.match(RequestNextChunkMessage.class, this::handle)
 				.match(NextChunkMessage.class, this::handle)
 				.match(NoChunksLeftMessage.class, this::handle)
-				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
+				.matchAny(object -> this.log().debug("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
 
@@ -170,7 +172,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		// - To split an object, serialize it into a byte array and then send the byte array range-by-range (tip: try "KryoPoolSingleton.get()").
 		// - If you serialize a message manually and send it, it will, of course, be serialized again by Akka's message passing subsystem.
 		// - But: Good, language-dependent serializers (such as kryo) are aware of byte arrays so that their serialization is very effective w.r.t. serialization time and size of serialized data.
-		this.log().info("Received large message.");
+		this.log().debug("Received large message to forward.");
 		Object message = largeMessage.getMessage();
 
 		SendMessageState ms = new SendMessageState();
@@ -185,17 +187,16 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		ms.setCurrChunkStartIx(0);
 		ms.hasSentAllChunks(false);
 		// Tell the receiver's proxy it can start requesting chunks.
-		this.log().info("Sending start message for message with ID {}.", largeMessage.getId());
+		this.log().debug("Sending start message for message with ID {}.", largeMessage.getId());
 		this.sendMessageStates.put(largeMessage.getId(), ms);
 		ms.getReceiverProxy().tell(new LargeMessageProxy.StartMessage(largeMessage.getId(), ms.getSerMsg().length), this.getSelf());
-
 
 		// TODO: set a timeout.
 	}
 
 	private void handle(StartMessage startMessage) {
 		final int messageId = startMessage.getId();
-		this.log().info("Handling start message for receiving a large message with ID {}.", messageId);
+		this.log().debug("Handling start message for receiving a large message with ID {}.", messageId);
 		// Check whether there is already a message with that particular ID.
 		if (this.receiveMessageStates.containsKey(messageId)) {
 			// TODO: throw;
@@ -206,15 +207,15 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		state.setExpectedBytes(startMessage.getNumBytesSerialized());
 		this.receiveMessageStates.put(messageId, state);
 
-		this.log().info("Have {} messages in progress ({}).", this.receiveMessageStates.size(), this.receiveMessageStates.keySet().stream().map((i) -> i.toString()).reduce("", String::concat));
+		this.log().debug("Have {} messages in progress ({}).", this.receiveMessageStates.size(), this.receiveMessageStates.keySet().stream().map((i) -> i.toString()).reduce("", String::concat));
 
 		if (this.receiveMessageStates.size() < 3) {
 			state.setStarted(true);
-			this.log().info("Requesting first block of message with ID {}.", messageId);
+			this.log().debug("Requesting first block of message with ID {}.", messageId);
 			sender().tell(new RequestNextChunkMessage(messageId), this.getSelf());
 		} else {
 			state.setStarted(false);
-			this.log().info("Deferring message with ID {}.", messageId);
+			this.log().debug("Deferring message with ID {}.", messageId);
 		}
 	}
 
@@ -234,7 +235,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 
 			if (currChunkEndIx == state.getSerMsg().length) {
 				state.hasSentAllChunks(true);
-				this.log().info("All chunks sent for message with ID {}, sending NoChunksLeftMessage to receiver's proxy {}...", messageId, state.getReceiverProxy());
+				this.log().debug("All chunks sent for message with ID {}, sending NoChunksLeftMessage to receiver's proxy {}...", messageId, state.getReceiverProxy());
 				state.getReceiverProxy().tell(
 					new LargeMessageProxy.NoChunksLeftMessage(
 						messageId,
@@ -265,7 +266,6 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 
 		// Save the bytes from the received chunk and request the next one.
 		state.getBuffer().write(message.getPayload());
-		// this.log().info("Size of buffer: {}.", state.getBuffer().size());
 		sender().tell(new RequestNextChunkMessage(messageId), this.getSelf());
 	}
 
@@ -278,7 +278,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 			return;
 		}
 
-		this.log().info("Received all chunks for large message with ID {}.", messageId);
+		this.log().debug("Received all chunks for large message with ID {}.", messageId);
 
 		if (!state.hasSentDeserMsg()) {
 			if (state.getBuffer().size() != state.expectedBytes) {
@@ -290,7 +290,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 			}
 
 			Object deserMsg = KryoPoolSingleton.get().fromBytes(state.getBuffer().toByteArray());
-			this.log().info("Deserialized message, sending it to actual receiver...");
+			this.log().debug("Deserialized message, sending it to actual receiver...");
 			noChunksLeftMessage.getReceiver().tell(deserMsg, noChunksLeftMessage.getSender());
 			state.hasSentDeserMsg(true);
 		}
@@ -302,7 +302,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 			.findFirst()
 			.orElse(null);
 		if (nextStartedState != null) {
-			this.log().info("Requesting deferred message with ID {}.", messageId);
+			this.log().debug("Requesting deferred message with ID {}.", messageId);
 			nextStartedState.getValue().setStarted(true);
 			sender().tell(new RequestNextChunkMessage(nextStartedState.getKey()), this.getSelf());
 		}
