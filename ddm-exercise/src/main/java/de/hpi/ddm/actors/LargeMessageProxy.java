@@ -1,14 +1,21 @@
 package de.hpi.ddm.actors;
 
 import java.io.Serializable;
+import java.util.Arrays;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
 import akka.actor.ActorSelection;
 import akka.actor.Props;
+import akka.event.Logging;
+import de.hpi.ddm.singletons.KryoPoolSingleton;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import java.util.HashMap;
+import java.util.TreeMap;
+import java.nio.ByteBuffer;
 
 public class LargeMessageProxy extends AbstractLoggingActor {
 
@@ -17,7 +24,8 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	////////////////////////
 
 	public static final String DEFAULT_NAME = "largeMessageProxy";
-	
+	public static final int MESSAGE_SIZE = 2;
+
 	public static Props props() {
 		return Props.create(LargeMessageProxy.class);
 	}
@@ -25,7 +33,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	////////////////////
 	// Actor Messages //
 	////////////////////
-	
+
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class LargeMessage<T> implements Serializable {
 		private static final long serialVersionUID = 2940665245810221108L;
@@ -39,12 +47,18 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		private T bytes;
 		private ActorRef sender;
 		private ActorRef receiver;
+		private int messageNumber;
+		private int byteHash;
+		private int messageLength;
+		private int numberOfMessages;
 	}
-	
+
+	private HashMap<Integer, TreeMap<Integer, byte[]>> messagesToReceiveMap;
+
 	/////////////////
 	// Actor State //
 	/////////////////
-	
+
 	/////////////////////
 	// Actor Lifecycle //
 	/////////////////////
@@ -52,7 +66,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	////////////////////
 	// Actor Behavior //
 	////////////////////
-	
+
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
@@ -67,25 +81,56 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		ActorRef sender = this.sender();
 		ActorRef receiver = largeMessage.getReceiver();
 		ActorSelection receiverProxy = this.context().actorSelection(receiver.path().child(DEFAULT_NAME));
-		
-		// TODO: Implement a protocol that transmits the potentially very large message object.
-		// The following code sends the entire message wrapped in a BytesMessage, which will definitely fail in a distributed setting if the message is large!
-		// Solution options:
-		// a) Split the message into smaller batches of fixed size and send the batches via ...
-		//    a.a) self-build send-and-ack protocol (see Master/Worker pull propagation), or
-		//    a.b) Akka streaming using the streams build-in backpressure mechanisms.
-		// b) Send the entire message via Akka's http client-server component.
-		// c) Other ideas ...
-		// Hints for splitting:
-		// - To split an object, serialize it into a byte array and then send the byte array range-by-range (tip: try "KryoPoolSingleton.get()").
-		// - If you serialize a message manually and send it, it will, of course, be serialized again by Akka's message passing subsystem.
-		// - But: Good, language-dependent serializers (such as kryo) are aware of byte arrays so that their serialization is very effective w.r.t. serialization time and size of serialized data.
-		receiverProxy.tell(new BytesMessage<>(message, sender, receiver), this.self());
+
+		byte[] byteMessage = KryoPoolSingleton.get().toBytesWithClass(message);
+		int byteHash = Arrays.hashCode(byteMessage);
+		int messageLength = byteMessage.length;
+		int numberOfMessages = (messageLength + 1) / MESSAGE_SIZE;
+
+		for (int messageNumber = 0; messageNumber * MESSAGE_SIZE < messageLength; messageNumber++) {
+
+			int startByte = messageNumber * MESSAGE_SIZE;
+			int endByte = (messageNumber + 1) * MESSAGE_SIZE;
+			if (messageLength < endByte) endByte = messageLength;
+
+			byte[] bytesToSend = Arrays.copyOfRange(byteMessage, startByte, endByte);
+			receiverProxy.tell(new BytesMessage<>(bytesToSend, sender, receiver, messageNumber, byteHash, messageLength, numberOfMessages), this.self());
+		}
+
+
 	}
 
 	private void handle(BytesMessage<?> message) {
-		// TODO: With option a): Store the message, ask for the next chunk and, if all chunks are present, reassemble the message's content, deserialize it and pass it to the receiver.
-		// The following code assumes that the transmitted bytes are the original message, which they shouldn't be in your proper implementation ;-)
-		message.getReceiver().tell(message.getBytes(), message.getSender());
+		int messageNumber = message.getMessageNumber();
+		int numberOfMessages = message.getNumberOfMessages();
+		int byteHash = message.getByteHash();
+
+		if (messagesToReceiveMap == null) messagesToReceiveMap = new HashMap<>();
+
+		if (!messagesToReceiveMap.containsKey(byteHash)) {
+			messagesToReceiveMap.put(byteHash, new TreeMap<>());
+		}
+
+		// add new chunk to chunkMap
+		TreeMap<Integer, byte[]> chunkMap = messagesToReceiveMap.get(byteHash);
+
+		if (!chunkMap.containsKey(messageNumber)) {
+			chunkMap.put(messageNumber, (byte[]) message.getBytes());
+		}
+
+		if (chunkMap.size() == numberOfMessages) {
+			byte[] rebuildMessage = new byte[message.getMessageLength()];
+			ByteBuffer bytesToAppend = ByteBuffer.wrap(rebuildMessage);
+			for (byte[] bytes : chunkMap.values()) {
+				bytesToAppend.put(bytes);
+			}
+
+			if (Arrays.hashCode(rebuildMessage) == byteHash) {
+
+				Object messageDeserialized = KryoPoolSingleton.get().fromBytes(rebuildMessage);
+
+				message.getReceiver().tell(messageDeserialized, message.getSender());
+			}
+		}
 	}
 }
