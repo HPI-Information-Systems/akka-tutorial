@@ -4,6 +4,8 @@ import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 
 import akka.actor.AbstractLoggingActor;
@@ -22,6 +24,9 @@ import lombok.NoArgsConstructor;
 import akka.cluster.Member;
 import akka.cluster.MemberStatus;
 
+/**
+ * Stupid Worker, can only search for hashes of an alphabet
+ */
 public class Worker extends AbstractLoggingActor {
 
 	////////////////////////
@@ -48,6 +53,30 @@ public class Worker extends AbstractLoggingActor {
 		private static final long serialVersionUID = 8343040942748609598L;
 		private BloomFilter welcomeData;
 	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class InitConfigurationMessage implements Serializable {
+		private static final long serialVersionUID = 1243040942711109598L;
+		private char[] alphabet;
+		private int permutationSubSize;
+		private int permutationStartSize;
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class HintHashesMessage implements Serializable {
+		private static final long serialVersionUID = 1343040942711109598L;
+		private List<String> hashes;
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class CrackNMessage implements Serializable {
+		private static final long serialVersionUID = 1543040942711109598L;
+		private int hashCount;
+	}
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class ReadyForMoreMessage implements Serializable {
+		private static final long serialVersionUID = 1843040942711109598L;
+	}
 	
 	/////////////////
 	// Actor State //
@@ -57,6 +86,11 @@ public class Worker extends AbstractLoggingActor {
 	private final Cluster cluster;
 	private final ActorRef largeMessageProxy;
 	private long registrationTime;
+
+	private char[] alphabet;
+	private List<String> permutations;
+	private HashSet hashes;
+	private int permutationIndex = 0;
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -85,7 +119,9 @@ public class Worker extends AbstractLoggingActor {
 				.match(MemberUp.class, this::handle)
 				.match(MemberRemoved.class, this::handle)
 				.match(WelcomeMessage.class, this::handle)
-				// TODO: Add further messages here to share work between Master and Worker actors
+				.match(InitConfigurationMessage.class, this::handle)
+				.match(HintHashesMessage.class, this::handle)
+				.match(CrackNMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -122,7 +158,28 @@ public class Worker extends AbstractLoggingActor {
 		final long transmissionTime = System.currentTimeMillis() - this.registrationTime;
 		this.log().info("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
 	}
-	
+
+	private void handle(InitConfigurationMessage message) {
+		this.heapPermutation(message.alphabet, message.alphabet.length, message.alphabet.length, this.permutations);
+		this.permutations = this.permutation.subList(message.permutationStartSize, message.permutationStartSize + message.permutationSubSize);	
+	}
+
+	private void handle(HintHashesMessage message) {
+		this.hashes.addAll(message.hashes);
+	}
+
+	private void handle(CrackNMessage message) {
+		List<String> permutationSubset = this.permutations.subList(this.permutationIndex, message.hashCount);
+		this.permutationIndex += message.hashCount;
+		for (String permutationMember: permutationSubset) {
+			String hash = this.hash(permutationMember);
+			if (this.hashes.contains(hash)) {
+				getSender().tell(new HashSolutionMessage(hash, permutationMember));
+			}
+		}
+		getSender().tell(new ReadyForMoreMessage());
+	}
+
 	private String hash(String characters) {
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");

@@ -15,6 +15,8 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import de.hpi.ddm.structures.PasswordIntel;
+
 public class Master extends AbstractLoggingActor {
 
 	////////////////////////
@@ -60,6 +62,13 @@ public class Master extends AbstractLoggingActor {
 	public static class RegistrationMessage implements Serializable {
 		private static final long serialVersionUID = 3303081601659723997L;
 	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class HashSolutionMessage implements Serializable {
+		private static final long serialVersionUID = 3303081601659723997L;
+		private final String hash;
+		private final String clearText;
+	}
 	
 	/////////////////
 	// Actor State //
@@ -71,6 +80,8 @@ public class Master extends AbstractLoggingActor {
 	private final ActorRef largeMessageProxy;
 	private final BloomFilter welcomeData;
 	private final List<String[]> lines;
+	private PasswordIntel[] passwordIntels;
+	private String[] passwords;
 
 	private long startTime;
 	
@@ -95,7 +106,6 @@ public class Master extends AbstractLoggingActor {
 				.match(FinishedReadingMessage.class, this::handle)
 				.match(Terminated.class, this::handle)
 				.match(RegistrationMessage.class, this::handle)
-				// TODO: Add further messages here to share work between Master and Worker actors
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -134,12 +144,8 @@ public class Master extends AbstractLoggingActor {
 		// b) Memory reduction: If the batches are processed sequentially, the memory consumption can be kept constant; if the entire input is read into main memory, the memory consumption scales at least linearly with the input size.
 		// - It is your choice, how and if you want to make use of the batched inputs. Simply aggregate all batches in the Master and start the processing afterwards, if you wish.
 
-		// TODO: Stop fetching lines from the Reader once an empty BatchMessage was received; we have seen all data then
-		/* if (message.getLines().isEmpty()) {
-			this.terminate();
-			return;
-		}
-		
+
+		/*
 		// TODO: Process the lines with the help of the worker actors
 		for (String[] line : message.getLines())
 			this.log().error("Need help processing: {}", Arrays.toString(line));
@@ -148,11 +154,30 @@ public class Master extends AbstractLoggingActor {
 		this.collector.tell(new Collector.CollectMessage("If I had results, this would be one."), this.self());
 		
 		// TODO: Fetch further lines from the Reader
-		this.reader.tell(new Reader.ReadMessage(), this.self()); */
+		this.reader.tell(new Reader.ReadMessage(), this.self());
+		*/
 		
 	}
 
 	void handle(FinishedReadingMessage message) {
+		// Init intels
+		this.passwordIntels = new PasswordIntel[this.lines.size()];
+		this.passwords = new String[this.lines.size()];
+
+		for (String[] csvLine: this.lines) {
+			int index = Integer.parseInt(csvLine[0]) - 1;
+			this.passwordIntels[index] = PasswordIntel(csvLine);
+		}
+
+		// Create workers
+		// On registration message
+			// init worker with alphabet and all hashes
+			// init worker with range to search for
+			// allow worker to start
+		
+			// 
+
+
 		this.log().info("Needs implementation");
 	}
 	
