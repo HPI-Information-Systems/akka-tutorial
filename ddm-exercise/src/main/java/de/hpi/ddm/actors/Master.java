@@ -31,6 +31,7 @@ public class Master extends AbstractLoggingActor {
 		this.reader = reader;
 		this.collector = collector;
 		this.workers = new ArrayList<>();
+		this.lines = new ArrayList<>();
 		this.largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
 		this.welcomeData = welcomeData;
 	}
@@ -50,6 +51,11 @@ public class Master extends AbstractLoggingActor {
 		private List<String[]> lines;
 	}
 
+	@Data @NoArgsConstructor
+	public static class FinishedReadingMessage implements Serializable {
+		private static final long serialVersionUID = 8343040968748609598L;
+	}
+
 	@Data
 	public static class RegistrationMessage implements Serializable {
 		private static final long serialVersionUID = 3303081601659723997L;
@@ -64,6 +70,7 @@ public class Master extends AbstractLoggingActor {
 	private final List<ActorRef> workers;
 	private final ActorRef largeMessageProxy;
 	private final BloomFilter welcomeData;
+	private final List<String[]> lines;
 
 	private long startTime;
 	
@@ -85,6 +92,7 @@ public class Master extends AbstractLoggingActor {
 		return receiveBuilder()
 				.match(StartMessage.class, this::handle)
 				.match(BatchMessage.class, this::handle)
+				.match(FinishedReadingMessage.class, this::handle)
 				.match(Terminated.class, this::handle)
 				.match(RegistrationMessage.class, this::handle)
 				// TODO: Add further messages here to share work between Master and Worker actors
@@ -97,8 +105,20 @@ public class Master extends AbstractLoggingActor {
 		
 		this.reader.tell(new Reader.ReadMessage(), this.self());
 	}
+
+	public List<String[]> getLines(){
+		return this.lines;
+	}
 	
 	protected void handle(BatchMessage message) {
+		// We assume that all lines fit in memory. If they do not, our system crashes in 100% of all cases.
+		List<String[]> lines = message.getLines();
+		if(lines.isEmpty()){
+			this.self().tell(new FinishedReadingMessage(), ActorRef.noSender());
+		} else {
+			this.lines.addAll(lines);
+			this.reader.tell(new Reader.ReadMessage(), this.self());
+		}
 		
 		// TODO: This is where the task begins:
 		// - The Master received the first batch of input records.
@@ -115,7 +135,7 @@ public class Master extends AbstractLoggingActor {
 		// - It is your choice, how and if you want to make use of the batched inputs. Simply aggregate all batches in the Master and start the processing afterwards, if you wish.
 
 		// TODO: Stop fetching lines from the Reader once an empty BatchMessage was received; we have seen all data then
-		if (message.getLines().isEmpty()) {
+		/* if (message.getLines().isEmpty()) {
 			this.terminate();
 			return;
 		}
@@ -128,8 +148,12 @@ public class Master extends AbstractLoggingActor {
 		this.collector.tell(new Collector.CollectMessage("If I had results, this would be one."), this.self());
 		
 		// TODO: Fetch further lines from the Reader
-		this.reader.tell(new Reader.ReadMessage(), this.self());
+		this.reader.tell(new Reader.ReadMessage(), this.self()); */
 		
+	}
+
+	protected void handle(FinishedReadingMessage message) {
+		this.log().error("Needs implementation");
 	}
 	
 	protected void terminate() {

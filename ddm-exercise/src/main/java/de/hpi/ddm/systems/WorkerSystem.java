@@ -20,16 +20,16 @@ public class WorkerSystem {
 	public static final String WORKER_ROLE = "worker";
 	
 	public static void start() {
-		final Configuration c = ConfigurationSingleton.get();
+		final Configuration configSingleton = ConfigurationSingleton.get();
 		
 		final Config config = ConfigFactory.parseString(
-				"akka.remote.artery.canonical.hostname = \"" + c.getHost() + "\"\n" +
-				"akka.remote.artery.canonical.port = " + c.getPort() + "\n" +
+				"akka.remote.artery.canonical.hostname = \"" + configSingleton.getHost() + "\"\n" +
+				"akka.remote.artery.canonical.port = " + configSingleton.getPort() + "\n" +
 				"akka.cluster.roles = [" + WORKER_ROLE + "]\n" +
-				"akka.cluster.seed-nodes = [\"akka://" + c.getActorSystemName() + "@" + c.getMasterHost() + ":" + c.getMasterPort() + "\"]")
+				"akka.cluster.seed-nodes = [\"akka://" + configSingleton.getActorSystemName() + "@" + configSingleton.getMasterHost() + ":" + configSingleton.getMasterPort() + "\"]")
 			.withFallback(ConfigFactory.load("application"));
 		
-		final ActorSystem system = ActorSystem.create(c.getActorSystemName(), config);
+		final ActorSystem system = ActorSystem.create(configSingleton.getActorSystemName(), config);
 		
 	//	ActorRef clusterListener = system.actorOf(ClusterListener.props(), ClusterListener.DEFAULT_NAME);
 	//	ActorRef metricsListener = system.actorOf(MetricsListener.props(), MetricsListener.DEFAULT_NAME);
@@ -39,8 +39,9 @@ public class WorkerSystem {
 		Cluster.get(system).registerOnMemberUp(new Runnable() {
 			@Override
 			public void run() {
-				for (int i = 0; i < c.getNumWorkers(); i++)
+				for (int i = 0; i < configSingleton.getNumWorkers(); i++){
 					system.actorOf(Worker.props(), Worker.DEFAULT_NAME + i);
+				}
 			}
 		});
 

@@ -98,7 +98,7 @@ public class LargeMessageProxyTest {
 				ActorRef sender = system.actorOf(TestActor.props(this.getRef()), "sender");
 				ActorRef receiver = system.actorOf(TestActor.props(this.getRef()), "receiver");
 				
-				within(Duration.ofSeconds(2), () -> {
+				within(Duration.ofSeconds(10), () -> {
 					// Test if a large message gets passed from one proxy to the other
 					StringBuffer longMessageBuffer = new StringBuffer("Hello, this is a String message with a very large payload!");
 					for (int i = 0; i < 10000; i++)
