@@ -6,6 +6,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HashSet;
 import java.util.List;
+import java.util.ArrayList;
 
 import akka.actor.AbstractActor.Receive;
 import akka.actor.AbstractLoggingActor;
@@ -111,8 +112,8 @@ public class Worker extends AbstractLoggingActor {
 	private long registrationTime;
 
 	private char[] alphabet;
-	private List<String> permutations;
-	private HashSet hashes;
+	private List<String> permutations = new ArrayList<String>();
+	private HashSet hashes = new HashSet();
 	private int permutationIndex = 0;
 
 	/////////////////////
@@ -188,15 +189,18 @@ public class Worker extends AbstractLoggingActor {
 	}
 
 	private void handle(CrackNMessage message) {
-		int end = Math.max(this.permutationIndex + message.hashCount, this.permutations.size());
+		int end = Math.min(this.permutationIndex + message.hashCount, this.permutations.size());
 		List<String> permutationSubset = this.permutations.subList(this.permutationIndex, end);
 		this.permutationIndex = end;
+		this.log().info("Perm Subset Size:" + permutationSubset.size());
 		for (String permutationMember : permutationSubset) {
 			String hash = Worker.hash(permutationMember);
 			if (this.hashes.contains(hash)) {
+				this.log().info("Found hash!" + hash + ":" + permutationMember);
 				getSender().tell(new HashSolutionMessage(hash, permutationMember), getSelf());
 			}
 		}
+		this.log().info("End:" + end + "\nPerm Size:" + this.permutations.size());
 		if (end == this.permutations.size()) {
 			getSender().tell(new FinishedPermutationsMessage(), getSelf());
 		} else {

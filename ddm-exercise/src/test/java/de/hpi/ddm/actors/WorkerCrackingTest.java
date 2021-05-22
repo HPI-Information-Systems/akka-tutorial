@@ -18,6 +18,7 @@ import de.hpi.ddm.actors.Master.HashSolutionMessage;
 import de.hpi.ddm.actors.Master.StartMessage;
 import de.hpi.ddm.actors.Worker.CrackNMessage;
 import de.hpi.ddm.actors.Worker.FinishedPermutationsMessage;
+import de.hpi.ddm.actors.Worker.ReadyForMoreMessage;
 import de.hpi.ddm.actors.Worker.HintHashesMessage;
 import de.hpi.ddm.actors.Worker.InitConfigurationMessage;
 import de.hpi.ddm.configuration.Configuration;
@@ -69,4 +70,55 @@ public class WorkerCrackingTest {
 		};
 	}
 
+	@Test
+	public void testGeneratingMultiplePermutations() {
+		new TestKit(system) {
+			{
+				ActorRef reaper = system.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
+
+				ActorRef worker = system.actorOf(Worker.props(), "worker");
+				final TestKit finishCrackingPrope = new TestKit(system);
+				worker.tell(new InitConfigurationMessage(new char[] {'d', 'e', 'f'}, 2,	0), finishCrackingPrope.getRef());
+				List<String> hashes = new ArrayList<String>();
+				hashes.add(Worker.hash("def"));
+				worker.tell(new HintHashesMessage(hashes), finishCrackingPrope.getRef());
+				worker.tell(new CrackNMessage(1), finishCrackingPrope.getRef());
+				within(Duration.ofSeconds(4), () -> {
+					finishCrackingPrope.expectMsgClass(HashSolutionMessage.class);
+					finishCrackingPrope.expectMsgClass(ReadyForMoreMessage.class);
+					finishCrackingPrope.expectNoMessage();
+					return null;
+				});
+			}
+		};
+	}
+
+
+	@Test
+	public void testGeneratingMultipleCrackSteps() {
+		new TestKit(system) {
+			{
+				ActorRef reaper = system.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
+
+				ActorRef worker = system.actorOf(Worker.props(), "worker");
+				final TestKit finishCrackingPrope = new TestKit(system);
+				worker.tell(new InitConfigurationMessage(new char[] {'g', 'h', 'i'}, 6,	0), finishCrackingPrope.getRef());
+				List<String> hashes = new ArrayList<String>();
+				hashes.add(Worker.hash("ghi"));
+				hashes.add(Worker.hash("ihg"));
+				worker.tell(new HintHashesMessage(hashes), finishCrackingPrope.getRef());
+				within(Duration.ofSeconds(4), () -> {
+					worker.tell(new CrackNMessage(2), finishCrackingPrope.getRef());
+					finishCrackingPrope.expectMsgClass(HashSolutionMessage.class);
+					finishCrackingPrope.expectMsgClass(ReadyForMoreMessage.class);
+					worker.tell(new CrackNMessage(2), finishCrackingPrope.getRef());
+					finishCrackingPrope.expectMsgClass(ReadyForMoreMessage.class);
+					worker.tell(new CrackNMessage(2), finishCrackingPrope.getRef());
+					finishCrackingPrope.expectMsgClass(HashSolutionMessage.class);
+					finishCrackingPrope.expectMsgClass(FinishedPermutationsMessage.class);
+					return null;
+				});
+			}
+		};
+	}
 }
