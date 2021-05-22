@@ -26,12 +26,12 @@ public class PasswordIntel implements Serializable {
         this.alphabet = csvLine[2];
         this.pwdLength = Integer.parseInt(csvLine[3]);
         this.pwdHash = csvLine[4];
-        this.hintHashes = Arrays.copyOfRange(csvLine, 5, csvLine.length - 1);
+        this.hintHashes = Arrays.copyOfRange(csvLine, 5, csvLine.length);
         this.uncrackedHashCounter = this.hintHashes.length;
         this.knownFalseChars = new HashSet<Character>();
     }
 
-    public void addFalseChar(String subAlphabetWithKnownHash){
+    public char addFalseChar(String subAlphabetWithKnownHash){
         int missing =  -1;
         for(int i = 0; i < alphabet.length(); ++i){
             boolean found = false;
@@ -47,5 +47,6 @@ public class PasswordIntel implements Serializable {
             }
         }
         this.knownFalseChars.add(alphabet.charAt(missing));
+        return alphabet.charAt(missing);
     }
 }

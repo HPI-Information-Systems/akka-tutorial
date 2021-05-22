@@ -71,8 +71,7 @@ public class Worker extends AbstractLoggingActor {
 		private static final long serialVersionUID = 1243040942711109598L;
 		private char[] alphabet;
 		private int passwordIndex;
-		private int permutationSubSize;
-		private int permutationStartSize;
+		private int permutationCount;
 	}
 
 	@Data
@@ -183,16 +182,14 @@ public class Worker extends AbstractLoggingActor {
 	}
 
 	private void handle(InitConfigurationMessage message) {
-		this.log().info("Got init message");
-		this.heapPermutation(message.alphabet, message.alphabet.length, message.alphabet.length, this.permutations);
-		int start = Math.max(Math.min(message.permutationStartSize, this.permutations.size()), 0);
-		int end = Math.max(Math.min(message.permutationStartSize + message.permutationSubSize, this.permutations.size()), 0);
+		this.permutations.clear();
+		this.hashes.clear();
+		Worker.heapPermutation(message.alphabet, message.alphabet.length, message.permutationCount, this.permutations);
 		this.passwordIndex = message.passwordIndex;
-		this.permutations = this.permutations.subList(start, end);
+		this.permutationIndex = 0;
 	}
 
 	private void handle(HintHashesMessage message) {
-		this.log().info("Got hashes");
 		this.hashes.addAll(message.hashes);
 	}
 
@@ -200,11 +197,10 @@ public class Worker extends AbstractLoggingActor {
 		int end = Math.min(this.permutationIndex + message.hashCount, this.permutations.size());
 		List<String> permutationSubset = this.permutations.subList(this.permutationIndex, end);
 		this.permutationIndex = end;
-		this.log().info("Working on Perm Subset Size:" + permutationSubset.size());
 		for (String permutationMember : permutationSubset) {
 			String hash = Worker.hash(permutationMember);
 			if (this.hashes.contains(hash)) {
-				this.log().info("Found hash!" + hash + ":" + permutationMember);
+				this.log().info("Found match");
 				getSender().tell(new HashSolutionMessage(hash, permutationMember, this.passwordIndex), getSelf());
 			}
 		}
@@ -235,12 +231,12 @@ public class Worker extends AbstractLoggingActor {
 	// Generating all permutations of an array using Heap's Algorithm
 	// https://en.wikipedia.org/wiki/Heap's_algorithm
 	// https://www.geeksforgeeks.org/heaps-algorithm-for-generating-permutations/
-	private void heapPermutation(char[] a, int size, int n, List<String> l) {
+	public static void heapPermutation(char[] a, int size, int n, List<String> l) {
 		// If size is 1, store the obtained permutation
 		if (size == 1)
 			l.add(new String(a));
 
-		for (int i = 0; i < size; i++) {
+		for (int i = 0; i < size && l.size() < n; i++) {
 			heapPermutation(a, size - 1, n, l);
 
 			// If size is odd, swap first and last element
