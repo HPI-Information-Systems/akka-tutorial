@@ -30,4 +30,22 @@ public class PasswordIntel implements Serializable {
         this.uncrackedHashCounter = this.hintHashes.length;
         this.knownFalseChars = new HashSet<Character>();
     }
+
+    public void addFalseChar(String subAlphabetWithKnownHash){
+        int missing =  -1;
+        for(int i = 0; i < alphabet.length(); ++i){
+            boolean found = false;
+            for(int j = 0; j < subAlphabetWithKnownHash.length(); ++j){
+                char b = subAlphabetWithKnownHash.charAt(j);
+                if(alphabet.charAt(i) == b){
+                    found = true;
+                }
+            }
+            if(!found){
+                missing = i;
+                break;
+            }
+        }
+        this.knownFalseChars.add(alphabet.charAt(missing));
+    }
 }

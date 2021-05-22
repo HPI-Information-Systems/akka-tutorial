@@ -1,9 +1,7 @@
 package de.hpi.ddm.actors;
 
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
@@ -34,6 +32,8 @@ public class Master extends AbstractLoggingActor {
 		this.collector = collector;
 		this.workers = new ArrayList<>();
 		this.lines = new ArrayList<>();
+		this.currentPasswordIndex = 0;
+		initConfigMessageQueue = new LinkedList<Worker.InitConfigurationMessage>();
 		this.largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
 		this.welcomeData = welcomeData;
 	}
@@ -68,8 +68,11 @@ public class Master extends AbstractLoggingActor {
 		private static final long serialVersionUID = 3303081601659723997L;
 		private String hash;
 		private String clearText;
+		private int passwordIndex;
 	}
-	
+
+
+
 	/////////////////
 	// Actor State //
 	/////////////////
@@ -81,7 +84,10 @@ public class Master extends AbstractLoggingActor {
 	private final BloomFilter welcomeData;
 	private final List<String[]> lines;
 	private PasswordIntel[] passwordIntels;
+	private int currentPasswordIndex;
+	private Queue<Worker.InitConfigurationMessage> initConfigMessageQueue;
 	private String[] passwords;
+	private boolean finishedHintCracking = false;
 
 	private long startTime;
 	
@@ -106,6 +112,9 @@ public class Master extends AbstractLoggingActor {
 				.match(FinishedReadingMessage.class, this::handle)
 				.match(Terminated.class, this::handle)
 				.match(RegistrationMessage.class, this::handle)
+				.match(Worker.ReadyForMoreMessage.class, this::handle)
+				.match(HashSolutionMessage.class, this::handle)
+				.match(Worker.FinishedPermutationsMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -159,6 +168,41 @@ public class Master extends AbstractLoggingActor {
 		
 	}
 
+	boolean generateNextTaskSet(){
+		if(!this.initConfigMessageQueue.isEmpty()){
+			return true;
+		}
+		if(this.currentPasswordIndex == this.passwordIntels.length - 1){
+			return false;
+		}
+		this.initConfigMessageQueue.clear();
+		PasswordIntel currentPassword = this.passwordIntels[this.currentPasswordIndex];
+		// Generate all alphabets
+		String alphabetASString = currentPassword.getAlphabet();
+		char[][] alphabets = new char[alphabetASString.length()][];
+		for(int i = 0; i < alphabetASString.length(); ++i){
+			String subAlphabet = alphabetASString.substring(0, i) + alphabetASString.substring(i + 1);
+			alphabets[i] = subAlphabet.toCharArray();
+		}
+		int numberOfPermutations = 1;
+		for (int i = 2; i < alphabetASString.length(); i++) {
+			numberOfPermutations = numberOfPermutations * i;
+		}
+		int packageSize = 5000;
+		for(char[] alphabet : alphabets){
+			for(int currentIndex = 0; currentIndex <= numberOfPermutations; currentIndex += packageSize){
+				Worker.InitConfigurationMessage currentMessage = new Worker.InitConfigurationMessage(alphabet, this.currentPasswordIndex, packageSize, currentIndex);
+				this.initConfigMessageQueue.add(currentMessage);
+			}
+		}
+		this.currentPasswordIndex++;
+		return true;
+	}
+
+	Worker.CrackNMessage getCrackMessage(){
+		return new Worker.CrackNMessage(500);
+	}
+
 	void handle(FinishedReadingMessage message) {
 		// Init intels
 		this.passwordIntels = new PasswordIntel[this.lines.size()];
@@ -167,6 +211,20 @@ public class Master extends AbstractLoggingActor {
 		for (String[] csvLine: this.lines) {
 			int index = Integer.parseInt(csvLine[0]) - 1;
 			this.passwordIntels[index] = new PasswordIntel(csvLine);
+		}
+		this.log().info("Starting with " + this.workers.size() + " workers the cracking job.");
+		this.generateNextTaskSet();
+		for(ActorRef worker : this.workers){
+			// Ensure we have generated enough tasks.
+			if(this.initConfigMessageQueue.size() == 0){
+				boolean stillHasTasks = this.generateNextTaskSet();
+				if(!stillHasTasks){
+					return;
+				}
+			}
+			Worker.InitConfigurationMessage initMessage = this.initConfigMessageQueue.remove();
+			worker.tell(initMessage, getSelf());
+			worker.tell(this.getCrackMessage(), getSelf());
 		}
 
 		// Create workers
@@ -178,7 +236,43 @@ public class Master extends AbstractLoggingActor {
 			// 
 
 
-		this.log().info("Needs implementation");
+		this.log().info("Send initial jobs.");
+	}
+
+	void handle(HashSolutionMessage message){
+		String clearText = message.getClearText();
+		int index = message.getPasswordIndex();
+		PasswordIntel currentPwd = this.passwordIntels[index];
+		currentPwd.setUncrackedHashCounter(currentPwd.getUncrackedHashCounter() - 1);
+		currentPwd.addFalseChar(clearText);
+		if(index == this.currentPasswordIndex && currentPwd.getUncrackedHashCounter() == 0){
+			this.initConfigMessageQueue.clear();
+			this.generateNextTaskSet();
+		}
+	}
+
+	void handle(Worker.ReadyForMoreMessage message){
+		int passwordIndex = message.getPasswordIndex();
+		PasswordIntel currentPwd = this.passwordIntels[passwordIndex];
+		if(currentPwd.getUncrackedHashCounter() == 0){
+			boolean hasNewTask = this.generateNextTaskSet();
+			if(hasNewTask) {
+				Worker.InitConfigurationMessage nextInitMessage = this.initConfigMessageQueue.remove();
+				getSender().tell(nextInitMessage, getSelf());
+				getSender().tell(this.getCrackMessage(), getSelf());
+			}
+		} else {
+			getSender().tell(this.getCrackMessage(), getSelf());
+		}
+	}
+
+	void handle(Worker.FinishedPermutationsMessage message){
+		boolean hasNewTask = this.generateNextTaskSet();
+		if(hasNewTask){
+			Worker.InitConfigurationMessage nextInitMessage = this.initConfigMessageQueue.remove();
+			getSender().tell(nextInitMessage, getSelf());
+			getSender().tell(this.getCrackMessage(), getSelf());
+		}
 	}
 	
 	protected void terminate() {

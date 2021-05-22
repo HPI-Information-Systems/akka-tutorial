@@ -56,7 +56,7 @@ public class WorkerCrackingTest {
 
 				ActorRef worker = system.actorOf(Worker.props(), "worker");
 				final TestKit finishCrackingPrope = new TestKit(system);
-				worker.tell(new InitConfigurationMessage(new char[] {'a', 'b', 'c'}, 1,	0), finishCrackingPrope.getRef());
+				worker.tell(new InitConfigurationMessage(new char[] {'a', 'b', 'c'}, 0, 1,	0), finishCrackingPrope.getRef());
 				List<String> hashes = new ArrayList<String>();
 				hashes.add(Worker.hash("abc"));
 				worker.tell(new HintHashesMessage(hashes), finishCrackingPrope.getRef());
@@ -78,7 +78,7 @@ public class WorkerCrackingTest {
 
 				ActorRef worker = system.actorOf(Worker.props(), "worker");
 				final TestKit finishCrackingPrope = new TestKit(system);
-				worker.tell(new InitConfigurationMessage(new char[] {'d', 'e', 'f'}, 2,	0), finishCrackingPrope.getRef());
+				worker.tell(new InitConfigurationMessage(new char[] {'d', 'e', 'f'},0, 2,	0), finishCrackingPrope.getRef());
 				List<String> hashes = new ArrayList<String>();
 				hashes.add(Worker.hash("def"));
 				worker.tell(new HintHashesMessage(hashes), finishCrackingPrope.getRef());
@@ -86,6 +86,29 @@ public class WorkerCrackingTest {
 				within(Duration.ofSeconds(4), () -> {
 					finishCrackingPrope.expectMsgClass(HashSolutionMessage.class);
 					finishCrackingPrope.expectMsgClass(ReadyForMoreMessage.class);
+					finishCrackingPrope.expectNoMessage();
+					return null;
+				});
+			}
+		};
+	}
+
+	@Test
+	public void testCanHandleTooManyPermutations() {
+		new TestKit(system) {
+			{
+				ActorRef reaper = system.actorOf(Reaper.props(), Reaper.DEFAULT_NAME);
+
+				ActorRef worker = system.actorOf(Worker.props(), "worker");
+				final TestKit finishCrackingPrope = new TestKit(system);
+				worker.tell(new InitConfigurationMessage(new char[] {'d', 'e', 'f'},0, 20,	0), finishCrackingPrope.getRef());
+				List<String> hashes = new ArrayList<String>();
+				hashes.add(Worker.hash("def"));
+				worker.tell(new HintHashesMessage(hashes), finishCrackingPrope.getRef());
+				worker.tell(new CrackNMessage(20), finishCrackingPrope.getRef());
+				within(Duration.ofSeconds(4), () -> {
+					finishCrackingPrope.expectMsgClass(HashSolutionMessage.class);
+					finishCrackingPrope.expectMsgClass(FinishedPermutationsMessage.class);
 					finishCrackingPrope.expectNoMessage();
 					return null;
 				});
@@ -102,7 +125,7 @@ public class WorkerCrackingTest {
 
 				ActorRef worker = system.actorOf(Worker.props(), "worker");
 				final TestKit finishCrackingPrope = new TestKit(system);
-				worker.tell(new InitConfigurationMessage(new char[] {'g', 'h', 'i'}, 6,	0), finishCrackingPrope.getRef());
+				worker.tell(new InitConfigurationMessage(new char[] {'g', 'h', 'i'}, 0,6,	0), finishCrackingPrope.getRef());
 				List<String> hashes = new ArrayList<String>();
 				hashes.add(Worker.hash("ghi"));
 				hashes.add(Worker.hash("ihg"));

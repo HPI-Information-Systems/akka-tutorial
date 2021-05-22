@@ -70,6 +70,7 @@ public class Worker extends AbstractLoggingActor {
 	public static class InitConfigurationMessage implements Serializable {
 		private static final long serialVersionUID = 1243040942711109598L;
 		private char[] alphabet;
+		private int passwordIndex;
 		private int permutationSubSize;
 		private int permutationStartSize;
 	}
@@ -92,8 +93,10 @@ public class Worker extends AbstractLoggingActor {
 
 	@Data
 	@NoArgsConstructor
+	@AllArgsConstructor
 	public static class ReadyForMoreMessage implements Serializable {
 		private static final long serialVersionUID = 1843040942711109598L;
+		private int passwordIndex;
 	}
 
 	@Data
@@ -113,8 +116,9 @@ public class Worker extends AbstractLoggingActor {
 
 	private char[] alphabet;
 	private List<String> permutations = new ArrayList<String>();
-	private HashSet hashes = new HashSet();
+	private HashSet<String> hashes = new HashSet<String>();
 	private int permutationIndex = 0;
+	private int passwordIndex = -1;
 
 	/////////////////////
 	// Actor Lifecycle //
@@ -180,8 +184,10 @@ public class Worker extends AbstractLoggingActor {
 
 	private void handle(InitConfigurationMessage message) {
 		this.heapPermutation(message.alphabet, message.alphabet.length, message.alphabet.length, this.permutations);
-		this.permutations = this.permutations.subList(message.permutationStartSize,
-				message.permutationStartSize + message.permutationSubSize);
+		int start = Math.max(Math.min(message.permutationStartSize, this.permutations.size()), 0);
+		int end = Math.max(Math.min(message.permutationStartSize + message.permutationSubSize, this.permutations.size()), 0);
+		this.passwordIndex = message.passwordIndex;
+		this.permutations = this.permutations.subList(start, end);
 	}
 
 	private void handle(HintHashesMessage message) {
@@ -192,19 +198,19 @@ public class Worker extends AbstractLoggingActor {
 		int end = Math.min(this.permutationIndex + message.hashCount, this.permutations.size());
 		List<String> permutationSubset = this.permutations.subList(this.permutationIndex, end);
 		this.permutationIndex = end;
-		this.log().info("Perm Subset Size:" + permutationSubset.size());
+		this.log().info("Working on Perm Subset Size:" + permutationSubset.size());
 		for (String permutationMember : permutationSubset) {
 			String hash = Worker.hash(permutationMember);
 			if (this.hashes.contains(hash)) {
 				this.log().info("Found hash!" + hash + ":" + permutationMember);
-				getSender().tell(new HashSolutionMessage(hash, permutationMember), getSelf());
+				getSender().tell(new HashSolutionMessage(hash, permutationMember, this.passwordIndex), getSelf());
 			}
 		}
-		this.log().info("End:" + end + "\nPerm Size:" + this.permutations.size());
+		this.log().info("Finished working on Permutations");
 		if (end == this.permutations.size()) {
 			getSender().tell(new FinishedPermutationsMessage(), getSelf());
 		} else {
-			getSender().tell(new ReadyForMoreMessage(), getSelf());
+			getSender().tell(new ReadyForMoreMessage(this.passwordIndex), getSelf());
 		}
 	}
 
