@@ -87,17 +87,15 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		int messageLength = byteMessage.length;
 		int numberOfMessages = (messageLength + 1) / MESSAGE_SIZE;
 
-		for (int messageNumber = 0; messageNumber * MESSAGE_SIZE < messageLength; messageNumber++) {
-
+		for (int messageNumber = 0; messageNumber <= numberOfMessages; messageNumber++) {
 			int startByte = messageNumber * MESSAGE_SIZE;
 			int endByte = (messageNumber + 1) * MESSAGE_SIZE;
-			if (messageLength < endByte) endByte = messageLength;
-
+			if (messageLength < endByte) {
+				endByte = messageLength;
+			}
 			byte[] bytesToSend = Arrays.copyOfRange(byteMessage, startByte, endByte);
 			receiverProxy.tell(new BytesMessage<>(bytesToSend, sender, receiver, messageNumber, byteHash, messageLength, numberOfMessages), this.self());
 		}
-
-
 	}
 
 	private void handle(BytesMessage<?> message) {
@@ -105,8 +103,9 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		int numberOfMessages = message.getNumberOfMessages();
 		int byteHash = message.getByteHash();
 
-		if (messagesToReceiveMap == null) messagesToReceiveMap = new HashMap<>();
-
+		if (messagesToReceiveMap == null) {
+			messagesToReceiveMap = new HashMap<>();
+		}
 		if (!messagesToReceiveMap.containsKey(byteHash)) {
 			messagesToReceiveMap.put(byteHash, new TreeMap<>());
 		}
@@ -124,11 +123,8 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 			for (byte[] bytes : chunkMap.values()) {
 				bytesToAppend.put(bytes);
 			}
-
 			if (Arrays.hashCode(rebuildMessage) == byteHash) {
-
 				Object messageDeserialized = KryoPoolSingleton.get().fromBytes(rebuildMessage);
-
 				message.getReceiver().tell(messageDeserialized, message.getSender());
 			}
 		}
