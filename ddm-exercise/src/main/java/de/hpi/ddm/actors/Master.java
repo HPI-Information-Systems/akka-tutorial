@@ -256,7 +256,7 @@ public class Master extends AbstractLoggingActor {
 				worker.tell(hintHashMessage, getSelf());
 			}
 			this.log().info("Starting worker to crack");
-			getSender().tell(this.getCrackMessage(), getSelf());
+			worker.tell(this.getCrackMessage(), getSelf());
 		} else {
 			this.log().info("No more task is available");
 		}
