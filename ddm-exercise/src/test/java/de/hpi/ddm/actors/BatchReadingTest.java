@@ -15,6 +15,7 @@ import com.typesafe.config.ConfigFactory;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import java.util.concurrent.TimeUnit;
 
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
@@ -61,7 +62,7 @@ public class BatchReadingTest {
 				BloomFilter filter = new BloomFilter();
 				ActorRef reader = system.actorOf(Reader.props(), "reader");
 				final TestActorRef<Master> masterRef = TestActorRef.create(system, Master.props(reader, collector, filter), "master");
-				final Master master = masterRef.underlyingActor();
+				
 				String[] line;
 				List<String[]> csvContent = new ArrayList<String[]>();
 				try {
@@ -76,9 +77,9 @@ public class BatchReadingTest {
 					return null; */
 				}
 
-				within(Duration.ofSeconds(10), () -> {
-					masterRef.tell(new StartMessage(), ActorRef.noSender());
-					this.expectMsgClass(FinishedReadingMessage.class);
+				masterRef.tell(new StartMessage(), ActorRef.noSender());
+				Master master = masterRef.underlyingActor();
+				within(Duration.ofSeconds(20), () -> {
 					assertEquals("The number of lines do not match.", (long)csvContent.size(), (long)master.getLines().size());
 					for(int i = 0; i < csvContent.size(); ++i){
 						assertArrayEquals(csvContent.get(i), master.getLines().get(i));

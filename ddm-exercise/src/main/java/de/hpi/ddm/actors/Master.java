@@ -153,7 +153,7 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	protected void handle(FinishedReadingMessage message) {
-		this.log().error("Needs implementation");
+		this.log().info("Needs implementation");
 	}
 	
 	protected void terminate() {
