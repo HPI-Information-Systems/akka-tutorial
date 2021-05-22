@@ -66,8 +66,8 @@ public class Master extends AbstractLoggingActor {
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class HashSolutionMessage implements Serializable {
 		private static final long serialVersionUID = 3303081601659723997L;
-		private final String hash;
-		private final String clearText;
+		private String hash;
+		private String clearText;
 	}
 	
 	/////////////////
@@ -166,7 +166,7 @@ public class Master extends AbstractLoggingActor {
 
 		for (String[] csvLine: this.lines) {
 			int index = Integer.parseInt(csvLine[0]) - 1;
-			this.passwordIntels[index] = PasswordIntel(csvLine);
+			this.passwordIntels[index] = new PasswordIntel(csvLine);
 		}
 
 		// Create workers

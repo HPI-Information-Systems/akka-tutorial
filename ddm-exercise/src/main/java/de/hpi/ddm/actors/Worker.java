@@ -4,10 +4,10 @@ import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 
+import akka.actor.AbstractActor.Receive;
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
 import akka.actor.PoisonPill;
@@ -16,13 +16,20 @@ import akka.cluster.Cluster;
 import akka.cluster.ClusterEvent.CurrentClusterState;
 import akka.cluster.ClusterEvent.MemberRemoved;
 import akka.cluster.ClusterEvent.MemberUp;
+import akka.cluster.Member;
+import akka.cluster.MemberStatus;
+import de.hpi.ddm.actors.Master.HashSolutionMessage;
+import de.hpi.ddm.actors.Worker.CrackNMessage;
+import de.hpi.ddm.actors.Worker.FinishedPermutationsMessage;
+import de.hpi.ddm.actors.Worker.HintHashesMessage;
+import de.hpi.ddm.actors.Worker.InitConfigurationMessage;
+import de.hpi.ddm.actors.Worker.ReadyForMoreMessage;
+import de.hpi.ddm.actors.Worker.WelcomeMessage;
 import de.hpi.ddm.structures.BloomFilter;
 import de.hpi.ddm.systems.MasterSystem;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import akka.cluster.Member;
-import akka.cluster.MemberStatus;
 
 /**
  * Stupid Worker, can only search for hashes of an alphabet
@@ -32,7 +39,7 @@ public class Worker extends AbstractLoggingActor {
 	////////////////////////
 	// Actor Construction //
 	////////////////////////
-	
+
 	public static final String DEFAULT_NAME = "worker";
 
 	public static Props props() {
@@ -43,18 +50,22 @@ public class Worker extends AbstractLoggingActor {
 		this.cluster = Cluster.get(this.context().system());
 		this.largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
 	}
-	
+
 	////////////////////
 	// Actor Messages //
 	////////////////////
 
-	@Data @NoArgsConstructor @AllArgsConstructor
+	@Data
+	@NoArgsConstructor
+	@AllArgsConstructor
 	public static class WelcomeMessage implements Serializable {
 		private static final long serialVersionUID = 8343040942748609598L;
 		private BloomFilter welcomeData;
 	}
 
-	@Data @NoArgsConstructor @AllArgsConstructor
+	@Data
+	@NoArgsConstructor
+	@AllArgsConstructor
 	public static class InitConfigurationMessage implements Serializable {
 		private static final long serialVersionUID = 1243040942711109598L;
 		private char[] alphabet;
@@ -62,22 +73,34 @@ public class Worker extends AbstractLoggingActor {
 		private int permutationStartSize;
 	}
 
-	@Data @NoArgsConstructor @AllArgsConstructor
+	@Data
+	@NoArgsConstructor
+	@AllArgsConstructor
 	public static class HintHashesMessage implements Serializable {
 		private static final long serialVersionUID = 1343040942711109598L;
 		private List<String> hashes;
 	}
 
-	@Data @NoArgsConstructor @AllArgsConstructor
+	@Data
+	@NoArgsConstructor
+	@AllArgsConstructor
 	public static class CrackNMessage implements Serializable {
 		private static final long serialVersionUID = 1543040942711109598L;
 		private int hashCount;
 	}
-	@Data @NoArgsConstructor @AllArgsConstructor
+
+	@Data
+	@NoArgsConstructor
 	public static class ReadyForMoreMessage implements Serializable {
 		private static final long serialVersionUID = 1843040942711109598L;
 	}
-	
+
+	@Data
+	@NoArgsConstructor
+	public static class FinishedPermutationsMessage implements Serializable {
+		private static final long serialVersionUID = 1883040942711109598L;
+	}
+
 	/////////////////
 	// Actor State //
 	/////////////////
@@ -91,7 +114,7 @@ public class Worker extends AbstractLoggingActor {
 	private List<String> permutations;
 	private HashSet hashes;
 	private int permutationIndex = 0;
-	
+
 	/////////////////////
 	// Actor Lifecycle //
 	/////////////////////
@@ -99,7 +122,7 @@ public class Worker extends AbstractLoggingActor {
 	@Override
 	public void preStart() {
 		Reaper.watchWithDefaultReaper(this);
-		
+
 		this.cluster.subscribe(this.self(), MemberUp.class, MemberRemoved.class);
 	}
 
@@ -114,16 +137,11 @@ public class Worker extends AbstractLoggingActor {
 
 	@Override
 	public Receive createReceive() {
-		return receiveBuilder()
-				.match(CurrentClusterState.class, this::handle)
-				.match(MemberUp.class, this::handle)
-				.match(MemberRemoved.class, this::handle)
-				.match(WelcomeMessage.class, this::handle)
-				.match(InitConfigurationMessage.class, this::handle)
-				.match(HintHashesMessage.class, this::handle)
+		return receiveBuilder().match(CurrentClusterState.class, this::handle).match(MemberUp.class, this::handle)
+				.match(MemberRemoved.class, this::handle).match(WelcomeMessage.class, this::handle)
+				.match(InitConfigurationMessage.class, this::handle).match(HintHashesMessage.class, this::handle)
 				.match(CrackNMessage.class, this::handle)
-				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
-				.build();
+				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString())).build();
 	}
 
 	private void handle(CurrentClusterState message) {
@@ -140,28 +158,29 @@ public class Worker extends AbstractLoggingActor {
 	private void register(Member member) {
 		if ((this.masterSystem == null) && member.hasRole(MasterSystem.MASTER_ROLE)) {
 			this.masterSystem = member;
-			
-			this.getContext()
-				.actorSelection(member.address() + "/user/" + Master.DEFAULT_NAME)
-				.tell(new Master.RegistrationMessage(), this.self());
-			
+
+			this.getContext().actorSelection(member.address() + "/user/" + Master.DEFAULT_NAME)
+					.tell(new Master.RegistrationMessage(), this.self());
+
 			this.registrationTime = System.currentTimeMillis();
 		}
 	}
-	
+
 	private void handle(MemberRemoved message) {
 		if (this.masterSystem.equals(message.member()))
 			this.self().tell(PoisonPill.getInstance(), ActorRef.noSender());
 	}
-	
+
 	private void handle(WelcomeMessage message) {
 		final long transmissionTime = System.currentTimeMillis() - this.registrationTime;
-		this.log().info("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
+		this.log().info("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in "
+				+ transmissionTime + " ms.");
 	}
 
 	private void handle(InitConfigurationMessage message) {
 		this.heapPermutation(message.alphabet, message.alphabet.length, message.alphabet.length, this.permutations);
-		this.permutations = this.permutation.subList(message.permutationStartSize, message.permutationStartSize + message.permutationSubSize);	
+		this.permutations = this.permutations.subList(message.permutationStartSize,
+				message.permutationStartSize + message.permutationSubSize);
 	}
 
 	private void handle(HintHashesMessage message) {
@@ -169,33 +188,37 @@ public class Worker extends AbstractLoggingActor {
 	}
 
 	private void handle(CrackNMessage message) {
-		List<String> permutationSubset = this.permutations.subList(this.permutationIndex, message.hashCount);
-		this.permutationIndex += message.hashCount;
-		for (String permutationMember: permutationSubset) {
-			String hash = this.hash(permutationMember);
+		int end = Math.max(this.permutationIndex + message.hashCount, this.permutations.size());
+		List<String> permutationSubset = this.permutations.subList(this.permutationIndex, end);
+		this.permutationIndex = end;
+		for (String permutationMember : permutationSubset) {
+			String hash = Worker.hash(permutationMember);
 			if (this.hashes.contains(hash)) {
-				getSender().tell(new HashSolutionMessage(hash, permutationMember));
+				getSender().tell(new HashSolutionMessage(hash, permutationMember), getSelf());
 			}
 		}
-		getSender().tell(new ReadyForMoreMessage());
+		if (end == this.permutations.size()) {
+			getSender().tell(new FinishedPermutationsMessage(), getSelf());
+		} else {
+			getSender().tell(new ReadyForMoreMessage(), getSelf());
+		}
 	}
 
-	private String hash(String characters) {
+	public static String hash(String characters) {
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");
 			byte[] hashedBytes = digest.digest(String.valueOf(characters).getBytes("UTF-8"));
-			
+
 			StringBuffer stringBuffer = new StringBuffer();
 			for (int i = 0; i < hashedBytes.length; i++) {
 				stringBuffer.append(Integer.toString((hashedBytes[i] & 0xff) + 0x100, 16).substring(1));
 			}
 			return stringBuffer.toString();
-		}
-		catch (NoSuchAlgorithmException | UnsupportedEncodingException e) {
+		} catch (NoSuchAlgorithmException | UnsupportedEncodingException e) {
 			throw new RuntimeException(e.getMessage());
 		}
 	}
-	
+
 	// Generating all permutations of an array using Heap's Algorithm
 	// https://en.wikipedia.org/wiki/Heap's_algorithm
 	// https://www.geeksforgeeks.org/heaps-algorithm-for-generating-permutations/

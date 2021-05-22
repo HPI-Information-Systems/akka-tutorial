@@ -1,15 +1,12 @@
 package de.hpi.ddm.structures;
 
 import java.io.Serializable;
-import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Random;
-
+import java.util.HashSet;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
-import lombok.NoArgsConstructor;
+import scala.Char;
 
 @Data @AllArgsConstructor
 public class PasswordIntel implements Serializable {
@@ -22,7 +19,7 @@ public class PasswordIntel implements Serializable {
     private int pwdLength;
 	private String[] hintHashes;
     private int uncrackedHashCounter; 
-    private Set<Char> knownFalseChars;
+    private HashSet<Character> knownFalseChars;
     
     public PasswordIntel(String[] csvLine) {
         this.user = csvLine[1];
@@ -31,6 +28,6 @@ public class PasswordIntel implements Serializable {
         this.pwdHash = csvLine[4];
         this.hintHashes = Arrays.copyOfRange(csvLine, 5, csvLine.length - 1);
         this.uncrackedHashCounter = this.hintHashes.length;
-        this.knownFalseChars = new Set<Char>();
+        this.knownFalseChars = new HashSet<Character>();
     }
 }
