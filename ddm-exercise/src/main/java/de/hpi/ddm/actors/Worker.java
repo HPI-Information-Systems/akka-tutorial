@@ -183,6 +183,7 @@ public class Worker extends AbstractLoggingActor {
 	}
 
 	private void handle(InitConfigurationMessage message) {
+		this.log().info("Got init message");
 		this.heapPermutation(message.alphabet, message.alphabet.length, message.alphabet.length, this.permutations);
 		int start = Math.max(Math.min(message.permutationStartSize, this.permutations.size()), 0);
 		int end = Math.max(Math.min(message.permutationStartSize + message.permutationSubSize, this.permutations.size()), 0);
@@ -191,6 +192,7 @@ public class Worker extends AbstractLoggingActor {
 	}
 
 	private void handle(HintHashesMessage message) {
+		this.log().info("Got hashes");
 		this.hashes.addAll(message.hashes);
 	}
 
@@ -206,10 +208,11 @@ public class Worker extends AbstractLoggingActor {
 				getSender().tell(new HashSolutionMessage(hash, permutationMember, this.passwordIndex), getSelf());
 			}
 		}
-		this.log().info("Finished working on Permutations");
 		if (end == this.permutations.size()) {
+			this.log().info("Finished working on Permutations");
 			getSender().tell(new FinishedPermutationsMessage(), getSelf());
 		} else {
+			this.log().info("Finished working on Permutation Batch");
 			getSender().tell(new ReadyForMoreMessage(this.passwordIndex), getSelf());
 		}
 	}

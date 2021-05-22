@@ -88,6 +88,7 @@ public class Master extends AbstractLoggingActor {
 	private Queue<Worker.InitConfigurationMessage> initConfigMessageQueue;
 	private String[] passwords;
 	private boolean finishedHintCracking = false;
+	private int foundHints = 0;
 
 	private long startTime;
 	
@@ -200,7 +201,7 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	Worker.CrackNMessage getCrackMessage(){
-		return new Worker.CrackNMessage(500);
+		return new Worker.CrackNMessage(50);
 	}
 
 	void handle(FinishedReadingMessage message) {
@@ -216,15 +217,7 @@ public class Master extends AbstractLoggingActor {
 		this.generateNextTaskSet();
 		for(ActorRef worker : this.workers){
 			// Ensure we have generated enough tasks.
-			if(this.initConfigMessageQueue.size() == 0){
-				boolean stillHasTasks = this.generateNextTaskSet();
-				if(!stillHasTasks){
-					return;
-				}
-			}
-			Worker.InitConfigurationMessage initMessage = this.initConfigMessageQueue.remove();
-			worker.tell(initMessage, getSelf());
-			worker.tell(this.getCrackMessage(), getSelf());
+			this.tellNextHintCrackingPart(worker);
 		}
 
 		// Create workers
@@ -239,9 +232,41 @@ public class Master extends AbstractLoggingActor {
 		this.log().info("Send initial jobs.");
 	}
 
+	void tellNextHintCrackingPart(ActorRef worker){
+		boolean hasTasks = this.generateNextTaskSet();
+		if(hasTasks){
+			Worker.InitConfigurationMessage initMessage = this.initConfigMessageQueue.remove();
+			worker.tell(initMessage, getSelf());
+			this.log().info("Sending worker init message");
+			PasswordIntel pwd = this.passwordIntels[initMessage.getPasswordIndex()];
+			String[] hints = pwd.getHintHashes();
+			int hintHashSize = 50;
+			this.log().info("Sending worker hashes");
+			List<String> hintsForWorker = new ArrayList<String>(hintHashSize);
+			for(String hint : hints){
+				hintsForWorker.add(hint);
+				if(hintsForWorker.size() == hintHashSize) {
+					Worker.HintHashesMessage hintHashMessage = new Worker.HintHashesMessage(hintsForWorker);
+					worker.tell(hintHashMessage, getSelf());
+					hintsForWorker.clear();
+				}
+			}
+			if(hintsForWorker.size() > 0){
+				Worker.HintHashesMessage hintHashMessage = new Worker.HintHashesMessage(hintsForWorker);
+				worker.tell(hintHashMessage, getSelf());
+			}
+			this.log().info("Starting worker to crack");
+			getSender().tell(this.getCrackMessage(), getSelf());
+		} else {
+			this.log().info("No more task is available");
+		}
+	}
+
 	void handle(HashSolutionMessage message){
 		String clearText = message.getClearText();
 		int index = message.getPasswordIndex();
+		this.foundHints++;
+		this.log().info("Found hash for hint " + clearText + ". Current hints: " +this.foundHints);
 		PasswordIntel currentPwd = this.passwordIntels[index];
 		currentPwd.setUncrackedHashCounter(currentPwd.getUncrackedHashCounter() - 1);
 		currentPwd.addFalseChar(clearText);
@@ -255,24 +280,14 @@ public class Master extends AbstractLoggingActor {
 		int passwordIndex = message.getPasswordIndex();
 		PasswordIntel currentPwd = this.passwordIntels[passwordIndex];
 		if(currentPwd.getUncrackedHashCounter() == 0){
-			boolean hasNewTask = this.generateNextTaskSet();
-			if(hasNewTask) {
-				Worker.InitConfigurationMessage nextInitMessage = this.initConfigMessageQueue.remove();
-				getSender().tell(nextInitMessage, getSelf());
-				getSender().tell(this.getCrackMessage(), getSelf());
-			}
+			this.tellNextHintCrackingPart(getSender());
 		} else {
 			getSender().tell(this.getCrackMessage(), getSelf());
 		}
 	}
 
 	void handle(Worker.FinishedPermutationsMessage message){
-		boolean hasNewTask = this.generateNextTaskSet();
-		if(hasNewTask){
-			Worker.InitConfigurationMessage nextInitMessage = this.initConfigMessageQueue.remove();
-			getSender().tell(nextInitMessage, getSelf());
-			getSender().tell(this.getCrackMessage(), getSelf());
-		}
+		this.tellNextHintCrackingPart(getSender());
 	}
 	
 	protected void terminate() {
