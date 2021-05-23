@@ -76,6 +76,7 @@ public class Worker extends AbstractLoggingActor {
 		private int[] startIndices;
 		private int steps;
 		private String passwordHash;
+		private int passwordIndex;
 	}
 
 	@Data
@@ -107,6 +108,14 @@ public class Worker extends AbstractLoggingActor {
 	@AllArgsConstructor
 	public static class ReadyForMoreMessage implements Serializable {
 		private static final long serialVersionUID = 1843040942711109598L;
+		private int passwordIndex;
+	}
+
+	@Data
+	@NoArgsConstructor
+	@AllArgsConstructor
+	public static class FinishedWorkingOnPasswordCrackingBatchMessage implements Serializable {
+		private static final long serialVersionUID = 1843040942711102898L;
 		private int passwordIndex;
 	}
 
@@ -211,6 +220,7 @@ public class Worker extends AbstractLoggingActor {
 		this.alphabet = message.alphabet;
 		this.passwordHash = message.passwordHash;
 		this.currentPasswordIndices = message.startIndices;
+		this.passwordIndex = message.passwordIndex;
 		this.currentlyTriedPasswordCombinations = 0;
 		this.maxPasswordCombinations = message.steps;
 	}
@@ -229,14 +239,16 @@ public class Worker extends AbstractLoggingActor {
 			String pwdHash = Worker.hash(currentPwdAsString);
 			if(pwdHash.equals(this.passwordHash)){
 				this.currentlyTriedPasswordCombinations = this.maxPasswordCombinations;
-				// TODO: Inform master via message
+				getSender().tell(new Master.PasswordSolutionMessage(pwdHash, currentPwdAsString, this.passwordIndex), getSelf());
 			}
 			Worker.shiftPwdPermutation(this.currentPasswordIndices, this.alphabet.length);
 		}
 		if(this.currentlyTriedPasswordCombinations < this.maxPasswordCombinations){
-			// Ask for more work
+			this.log().info("Finished working on Password Permutation Batch");
+			getSender().tell(new FinishedWorkingOnPasswordCrackingBatchMessage(this.passwordIndex), getSelf());
 		} else {
-			// Ask for another work package
+			this.log().info("Finished working on Password Permutation Package");
+			getSender().tell(new FinishedPermutationsMessage(), getSelf());
 		}
 	}
 

@@ -1,8 +1,10 @@
 package de.hpi.ddm.structures;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -64,5 +66,15 @@ public class PasswordIntel implements Serializable {
 
     public void setPwdClearText(String pwdClearText){
         this.pwdSolution = pwdClearText;
+    }
+
+    public char[] getAlphabetOfPwd(){
+        String reducedAlphabet = "";
+        for(char letter : alphabet.toCharArray()){
+            if(!knownFalseChars.contains(letter)){
+                reducedAlphabet += Character.toString(letter);
+            }
+        }
+        return reducedAlphabet.toCharArray();
     }
 }
