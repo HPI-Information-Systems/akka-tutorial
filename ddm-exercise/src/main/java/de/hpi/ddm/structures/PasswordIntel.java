@@ -16,9 +16,11 @@ public class PasswordIntel implements Serializable {
     private String alphabet;
     private String user;
     private String pwdHash;
+    private String pwdSolution;
     private int pwdLength;
-	private String[] hintHashes;
-    private int uncrackedHashCounter; 
+    private String[] hintHashes;
+    private String[] hintSolutions;
+    private int uncrackedHashCounter;
     private HashSet<Character> knownFalseChars;
     
     public PasswordIntel(String[] csvLine) {
@@ -27,16 +29,26 @@ public class PasswordIntel implements Serializable {
         this.pwdLength = Integer.parseInt(csvLine[3]);
         this.pwdHash = csvLine[4];
         this.hintHashes = Arrays.copyOfRange(csvLine, 5, csvLine.length);
+        this.hintSolutions = new String[this.hintHashes.length];
+        this.pwdSolution = null;
         this.uncrackedHashCounter = this.hintHashes.length;
         this.knownFalseChars = new HashSet<Character>();
     }
 
-    public char addFalseChar(String subAlphabetWithKnownHash){
+    public char addFalseChar(String clearText, String hash){
+        // Find the index of the cracked hint and add it to the hint solutions.
+        for(int i = 0; i < hintHashes.length; ++i){
+            if(hintHashes[i].equals(hash)){
+                this.hintSolutions[i] = clearText;
+                break;
+            }
+        }
+        // Identify the missing char from the alphabet in the clear text and add it to the know false char hashset.
         int missing =  -1;
         for(int i = 0; i < alphabet.length(); ++i){
             boolean found = false;
-            for(int j = 0; j < subAlphabetWithKnownHash.length(); ++j){
-                char b = subAlphabetWithKnownHash.charAt(j);
+            for(int j = 0; j < clearText.length(); ++j){
+                char b = clearText.charAt(j);
                 if(alphabet.charAt(i) == b){
                     found = true;
                 }
@@ -48,5 +60,9 @@ public class PasswordIntel implements Serializable {
         }
         this.knownFalseChars.add(alphabet.charAt(missing));
         return alphabet.charAt(missing);
+    }
+
+    public void setPwdClearText(String pwdClearText){
+        this.pwdSolution = pwdClearText;
     }
 }

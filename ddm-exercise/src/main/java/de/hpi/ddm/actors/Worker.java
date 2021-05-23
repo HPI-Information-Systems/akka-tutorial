@@ -8,7 +8,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.ArrayList;
 
-import akka.actor.AbstractActor.Receive;
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
 import akka.actor.PoisonPill;
@@ -20,12 +19,6 @@ import akka.cluster.ClusterEvent.MemberUp;
 import akka.cluster.Member;
 import akka.cluster.MemberStatus;
 import de.hpi.ddm.actors.Master.HashSolutionMessage;
-import de.hpi.ddm.actors.Worker.CrackNMessage;
-import de.hpi.ddm.actors.Worker.FinishedPermutationsMessage;
-import de.hpi.ddm.actors.Worker.HintHashesMessage;
-import de.hpi.ddm.actors.Worker.InitConfigurationMessage;
-import de.hpi.ddm.actors.Worker.ReadyForMoreMessage;
-import de.hpi.ddm.actors.Worker.WelcomeMessage;
 import de.hpi.ddm.structures.BloomFilter;
 import de.hpi.ddm.systems.MasterSystem;
 import lombok.AllArgsConstructor;
@@ -67,11 +60,22 @@ public class Worker extends AbstractLoggingActor {
 	@Data
 	@NoArgsConstructor
 	@AllArgsConstructor
-	public static class InitConfigurationMessage implements Serializable {
+	public static class InitHintCrackingConfigurationMessage implements Serializable {
 		private static final long serialVersionUID = 1243040942711109598L;
 		private char[] alphabet;
 		private int passwordIndex;
 		private int permutationCount;
+	}
+
+	@Data
+	@NoArgsConstructor
+	@AllArgsConstructor
+	public static class InitPwdCrackingConfigurationMessage implements Serializable {
+		private static final long serialVersionUID = 1243040942788109598L;
+		private char[] alphabet;
+		private int[] startIndices;
+		private int steps;
+		private String passwordHash;
 	}
 
 	@Data
@@ -85,9 +89,17 @@ public class Worker extends AbstractLoggingActor {
 	@Data
 	@NoArgsConstructor
 	@AllArgsConstructor
-	public static class CrackNMessage implements Serializable {
+	public static class CrackNextNHintPermutationsMessage implements Serializable {
 		private static final long serialVersionUID = 1543040942711109598L;
 		private int hashCount;
+	}
+
+	@Data
+	@NoArgsConstructor
+	@AllArgsConstructor
+	public static class CrackNextNPasswordPermutationsMessage implements Serializable {
+		private static final long serialVersionUID = 1543040943451109598L;
+		private int count;
 	}
 
 	@Data
@@ -118,6 +130,10 @@ public class Worker extends AbstractLoggingActor {
 	private HashSet<String> hashes = new HashSet<String>();
 	private int permutationIndex = 0;
 	private int passwordIndex = -1;
+	private String passwordHash = "";
+	private int[] currentPasswordIndices = new int[0];
+	private int currentlyTriedPasswordCombinations = 0;
+	private int maxPasswordCombinations = 0;
 
 	/////////////////////
 	// Actor Lifecycle //
@@ -143,8 +159,10 @@ public class Worker extends AbstractLoggingActor {
 	public Receive createReceive() {
 		return receiveBuilder().match(CurrentClusterState.class, this::handle).match(MemberUp.class, this::handle)
 				.match(MemberRemoved.class, this::handle).match(WelcomeMessage.class, this::handle)
-				.match(InitConfigurationMessage.class, this::handle).match(HintHashesMessage.class, this::handle)
-				.match(CrackNMessage.class, this::handle)
+				.match(InitHintCrackingConfigurationMessage.class, this::handle).match(HintHashesMessage.class, this::handle)
+				.match(InitPwdCrackingConfigurationMessage.class, this::handle)
+				.match(CrackNextNHintPermutationsMessage.class, this::handle)
+				.match(CrackNextNPasswordPermutationsMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString())).build();
 	}
 
@@ -181,7 +199,7 @@ public class Worker extends AbstractLoggingActor {
 				+ transmissionTime + " ms.");
 	}
 
-	private void handle(InitConfigurationMessage message) {
+	private void handle(InitHintCrackingConfigurationMessage message) {
 		this.permutations.clear();
 		this.hashes.clear();
 		Worker.heapPermutation(message.alphabet, message.alphabet.length, message.permutationCount, this.permutations);
@@ -189,11 +207,40 @@ public class Worker extends AbstractLoggingActor {
 		this.permutationIndex = 0;
 	}
 
+	private void handle(InitPwdCrackingConfigurationMessage message){
+		this.alphabet = message.alphabet;
+		this.passwordHash = message.passwordHash;
+		this.currentPasswordIndices = message.startIndices;
+		this.currentlyTriedPasswordCombinations = 0;
+		this.maxPasswordCombinations = message.steps;
+	}
+
 	private void handle(HintHashesMessage message) {
 		this.hashes.addAll(message.hashes);
 	}
 
-	private void handle(CrackNMessage message) {
+	private void handle(CrackNextNPasswordPermutationsMessage message) {
+		char[] currentPwd = new char[this.currentPasswordIndices.length];
+		for(int steps = 0; steps < message.count && this.currentlyTriedPasswordCombinations < this.maxPasswordCombinations; ++this.currentlyTriedPasswordCombinations, ++steps){
+			for(int i = 0; i < this.currentPasswordIndices.length; ++i){
+				currentPwd[i] = this.alphabet[this.currentPasswordIndices[i]];
+			}
+			String currentPwdAsString = new String(currentPwd);
+			String pwdHash = Worker.hash(currentPwdAsString);
+			if(pwdHash.equals(this.passwordHash)){
+				this.currentlyTriedPasswordCombinations = this.maxPasswordCombinations;
+				// TODO: Inform master via message
+			}
+			Worker.shiftPwdPermutation(this.currentPasswordIndices, this.alphabet.length);
+		}
+		if(this.currentlyTriedPasswordCombinations < this.maxPasswordCombinations){
+			// Ask for more work
+		} else {
+			// Ask for another work package
+		}
+	}
+
+	private void handle(CrackNextNHintPermutationsMessage message) {
 		int end = Math.min(this.permutationIndex + message.hashCount, this.permutations.size());
 		List<String> permutationSubset = this.permutations.subList(this.permutationIndex, end);
 		this.permutationIndex = end;
@@ -253,5 +300,55 @@ public class Worker extends AbstractLoggingActor {
 				a[size - 1] = temp;
 			}
 		}
+	}
+
+	public static boolean shiftPwdPermutation(int[] alphabetIndices, int alphabetLength){
+		int currentIndex = alphabetIndices.length - 1;
+		boolean hasOverflow = true;
+		while(hasOverflow && currentIndex >= 0){
+			++alphabetIndices[currentIndex];
+			hasOverflow = alphabetIndices[currentIndex] >= alphabetLength;
+			if(hasOverflow){
+				alphabetIndices[currentIndex] = 0;
+			}
+			--currentIndex;
+		}
+		return !hasOverflow;
+	}
+
+	public static boolean addPwdPermutation(int[] firstAlphabetIndices, int[] secondAlphabetIndices, int alphabetLength){
+		/* would be nice but we do not want to write catch blocks
+		if(firstAlphabetIndices.length != secondAlphabetIndices.length){
+			throw new IllegalAccessException("The two provided arguments do not have the same length! First length " + firstAlphabetIndices.length + "; second length " + secondAlphabetIndices.length);
+		} */
+		int overflow = 0;
+		for(int i = firstAlphabetIndices.length - 1; i >= 0; --i){
+			int sum = firstAlphabetIndices[i] + secondAlphabetIndices[i] + overflow;
+			if(sum > alphabetLength - 1){
+				int remainder = sum % alphabetLength;
+				overflow = (int) Math.floor((float)sum / (float) alphabetLength);
+				firstAlphabetIndices[i] = remainder;
+			} else {
+				firstAlphabetIndices[i] = sum;
+				overflow=0;
+			}
+		}
+		boolean didNotOverflow = overflow == 0;
+		return didNotOverflow;
+	}
+
+	public static boolean numberToPermutation(int number, int alphabetLength, int passwordLength, int[] alphabetIndices){
+		for(int i = 0; i < passwordLength; ++i){
+			alphabetIndices[i] = 0;
+		}
+		int index = passwordLength - 1;
+		while(index >= 0 && number > 0) {
+			int remainder = number % alphabetLength;
+			alphabetIndices[index] = remainder;
+			number = (int) Math.floor((float) number / (float) alphabetLength);
+			--index;
+		}
+		boolean didNotOverflow = number <= 0;
+		return didNotOverflow;
 	}
 }

@@ -15,12 +15,13 @@ import lombok.NoArgsConstructor;
 
 import de.hpi.ddm.structures.PasswordIntel;
 
+
 public class Master extends AbstractLoggingActor {
 
 	////////////////////////
 	// Actor Construction //
 	////////////////////////
-	
+	public static final int PACKAGE_SIZE = 20000000;
 	public static final String DEFAULT_NAME = "master";
 
 	public static Props props(final ActorRef reader, final ActorRef collector, final BloomFilter welcomeData) {
@@ -32,8 +33,9 @@ public class Master extends AbstractLoggingActor {
 		this.collector = collector;
 		this.workers = new ArrayList<>();
 		this.lines = new ArrayList<>();
-		this.currentPasswordIndex = 0;
-		initConfigMessageQueue = new LinkedList<Worker.InitConfigurationMessage>();
+		this.currentPasswordHintCrackingIndex = 0;
+		this.initHintCrackingConfigMessageQueue = new LinkedList<>();
+		this.initPwdCrackingConfigMessageQueue = new LinkedList<>();
 		this.largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
 		this.welcomeData = welcomeData;
 	}
@@ -71,6 +73,14 @@ public class Master extends AbstractLoggingActor {
 		private int passwordIndex;
 	}
 
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class PasswordSolutionMessage implements Serializable {
+		private static final long serialVersionUID = 3303081601659194597L;
+		private String hash;
+		private String clearText;
+		private int passwordIndex;
+	}
+
 
 
 	/////////////////
@@ -84,11 +94,13 @@ public class Master extends AbstractLoggingActor {
 	private final BloomFilter welcomeData;
 	private final List<String[]> lines;
 	private PasswordIntel[] passwordIntels;
-	private int currentPasswordIndex;
-	private Queue<Worker.InitConfigurationMessage> initConfigMessageQueue;
-	private String[] passwords;
+	private int currentPasswordHintCrackingIndex;
+	private int currentPasswordCrackingIndex = 0;
+	private Queue<Worker.InitHintCrackingConfigurationMessage> initHintCrackingConfigMessageQueue;
+	private Queue<Worker.InitPwdCrackingConfigurationMessage> initPwdCrackingConfigMessageQueue;
 	private boolean finishedHintCracking = false;
 	private int foundHints = 0;
+	private int foundPasswords = 0;
 
 	private long startTime;
 	
@@ -116,6 +128,7 @@ public class Master extends AbstractLoggingActor {
 				.match(Worker.ReadyForMoreMessage.class, this::handle)
 				.match(HashSolutionMessage.class, this::handle)
 				.match(Worker.FinishedPermutationsMessage.class, this::handle)
+				.match(PasswordSolutionMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -169,14 +182,14 @@ public class Master extends AbstractLoggingActor {
 		
 	}
 
-	boolean generateNextTaskSet(){
-		if(!this.initConfigMessageQueue.isEmpty()){
+	boolean generateNextHintCrackingTaskSet(){
+		if(!this.initHintCrackingConfigMessageQueue.isEmpty()){
 			return true;
 		}
-		if(this.currentPasswordIndex == this.passwordIntels.length){
+		if(this.currentPasswordHintCrackingIndex == this.passwordIntels.length){
 			return false;
 		}
-		PasswordIntel currentPassword = this.passwordIntels[this.currentPasswordIndex];
+		PasswordIntel currentPassword = this.passwordIntels[this.currentPasswordHintCrackingIndex];
 		// Generate all alphabets
 		String alphabetASString = currentPassword.getAlphabet();
 		char[][] alphabets = new char[alphabetASString.length()][];
@@ -184,35 +197,51 @@ public class Master extends AbstractLoggingActor {
 			String subAlphabet = alphabetASString.substring(0, i) + alphabetASString.substring(i + 1);
 			alphabets[i] = subAlphabet.toCharArray();
 		}
-		int packageSize = 20000000;
 		List<String> permutations = new ArrayList<String>();
 		for(char[] alphabet : alphabets){
 			permutations.clear();
 			Worker.heapPermutation(alphabet, alphabet.length, alphabet.length, permutations);
 			int currentIndex = 0;
-			for(; currentIndex <= permutations.size(); currentIndex += packageSize){
-				Worker.InitConfigurationMessage currentMessage = new Worker.InitConfigurationMessage(permutations.get(currentIndex).toCharArray(), this.currentPasswordIndex, packageSize);
-				this.initConfigMessageQueue.add(currentMessage);
+			for(; currentIndex <= permutations.size(); currentIndex += PACKAGE_SIZE){
+				Worker.InitHintCrackingConfigurationMessage currentMessage = new Worker.InitHintCrackingConfigurationMessage(permutations.get(currentIndex).toCharArray(), this.currentPasswordHintCrackingIndex, PACKAGE_SIZE);
+				this.initHintCrackingConfigMessageQueue.add(currentMessage);
 			}
 		}
-		this.currentPasswordIndex++;
+		this.currentPasswordHintCrackingIndex++;
 		return true;
 	}
 
-	Worker.CrackNMessage getCrackMessage(){
-		return new Worker.CrackNMessage(1000000);
+	boolean generateNextPasswordCrackingTaskSet(){
+		if(!this.initPwdCrackingConfigMessageQueue.isEmpty()){
+			return true;
+		}
+		boolean foundReadyAndUnsolvedPassword = false;
+		for(int i = 0; i < this.passwordIntels.length && !foundReadyAndUnsolvedPassword; ++i){
+			PasswordIntel currentPassword = this.passwordIntels[i];
+			boolean solvedAllHints = currentPassword.getUncrackedHashCounter() == 0;
+			if(solvedAllHints && currentPassword.getPwdSolution() == null){
+				foundReadyAndUnsolvedPassword = true;
+				this.currentPasswordCrackingIndex = i;
+
+				// Worker.InitPwdCrackingConfigurationMessage
+			}
+		}
+		return foundReadyAndUnsolvedPassword;
+	}
+
+	Worker.CrackNextNHintPermutationsMessage getCrackMessage(){
+		return new Worker.CrackNextNHintPermutationsMessage(1000000);
 	}
 
 	void handle(FinishedReadingMessage message) {
 		// Init intels
 		this.passwordIntels = new PasswordIntel[this.lines.size()];
-		this.passwords = new String[this.lines.size()];
 
 		for (String[] csvLine: this.lines) {
 			int index = Integer.parseInt(csvLine[0]) - 1;
 			this.passwordIntels[index] = new PasswordIntel(csvLine);
 		}
-		this.generateNextTaskSet();
+		this.generateNextHintCrackingTaskSet();
 		for(ActorRef worker : this.workers){
 			// Ensure we have generated enough tasks.
 			this.tellNextHintCrackingPart(worker);
@@ -222,9 +251,9 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	void tellNextHintCrackingPart(ActorRef worker){
-		boolean hasTasks = this.generateNextTaskSet();
+		boolean hasTasks = this.generateNextHintCrackingTaskSet();
 		if(hasTasks){
-			Worker.InitConfigurationMessage initMessage = this.initConfigMessageQueue.remove();
+			Worker.InitHintCrackingConfigurationMessage initMessage = this.initHintCrackingConfigMessageQueue.remove();
 			worker.tell(initMessage, getSelf());
 			PasswordIntel pwd = this.passwordIntels[initMessage.getPasswordIndex()];
 			String[] hints = pwd.getHintHashes();
@@ -250,16 +279,32 @@ public class Master extends AbstractLoggingActor {
 
 	void handle(HashSolutionMessage message){
 		String clearText = message.getClearText();
+		String hash = message.getHash();
 		int index = message.getPasswordIndex();
 		this.foundHints++;
 
 		PasswordIntel currentPwd = this.passwordIntels[index];
 		currentPwd.setUncrackedHashCounter(currentPwd.getUncrackedHashCounter() - 1);
-		char missingChar = currentPwd.addFalseChar(clearText);
-		this.log().info("Found hash for hint "+ message.getHash()+" for password at index {}. The hint is {} thus {} is missing. Currently cracked hints: {}",  index, clearText, Character.toString(missingChar),this.foundHints);
-		if(index == this.currentPasswordIndex && currentPwd.getUncrackedHashCounter() == 0){
-			this.initConfigMessageQueue.clear();
-			this.generateNextTaskSet();
+		char missingChar = currentPwd.addFalseChar(clearText, hash);
+		this.log().info("Found hash for hint " + hash + " for password at index {}. The hint is {} thus {} is missing. Currently cracked hints: {}",  index, clearText, Character.toString(missingChar),this.foundHints);
+		if(index == this.currentPasswordHintCrackingIndex && currentPwd.getUncrackedHashCounter() == 0){
+			this.initHintCrackingConfigMessageQueue.clear();
+			this.generateNextHintCrackingTaskSet();
+		}
+	}
+
+	void handle(PasswordSolutionMessage message){
+		String clearText = message.getClearText();
+		String hash = message.getHash();
+		int index = message.getPasswordIndex();
+		this.foundPasswords++;
+
+		PasswordIntel currentPwd = this.passwordIntels[index];
+		currentPwd.setPwdClearText(clearText);
+		this.log().info("Found hash for pwd {}: {}", index, clearText);
+		if(index == this.currentPasswordHintCrackingIndex && currentPwd.getUncrackedHashCounter() == 0){
+			this.initHintCrackingConfigMessageQueue.clear();
+			this.generateNextHintCrackingTaskSet();
 		}
 	}
 
