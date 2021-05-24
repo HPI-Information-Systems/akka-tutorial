@@ -17,7 +17,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
-import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -120,8 +119,7 @@ public class Worker extends AbstractLoggingActor {
 		final String passwordChars = record[2];
 		final int passwordLength = Integer.parseInt(record[3]);
 		final String passwordHash = record[4];
-        List<String> hintsHashes = Arrays.asList(record).subList(5, record.length);
-        List<String> hints = hintsHashes.stream().map(h -> message.getPermutationHashes().get(h)).collect(Collectors.toList());
+        List<String> hints = Arrays.asList(record).subList(5, record.length);
 
         List<Character> notIncludedChars = new ArrayList<>();
         hints.stream().forEach(h -> {
@@ -148,7 +146,7 @@ public class Worker extends AbstractLoggingActor {
 		solutionRecord.add(password);
 		solutionRecord.addAll(hints);
 
-		tellMaster(new Master.ReceiveResoledRecordMessage(String.join(";", solutionRecord)));
+		tellMaster(new Master.ReceiveResolvedRecordMessage(String.join(";", solutionRecord)));
     }
 
     private void handle(BuildPermutationsMessage message) {
@@ -158,9 +156,25 @@ public class Worker extends AbstractLoggingActor {
         tellMaster(new Master.ReceivePermutationsMessage(permutations));
     }
 
+
     private void handle(BuildPermutationHashMessage message) {
-        System.out.println("BuildPermutationHashMessage from master " + message.permutation);
-        tellMaster(new Master.ReceivePermutationHashMessage(message.permutation, this.hash(message.permutation)));
+        System.out.println("BuildPermutationHashMessage from master " + message.getPermutations().size());
+        final List<String> permutations = message.getPermutations();
+        final List<String> hashedPermutations = permutations.stream().map(p -> hash(p)).collect(Collectors.toList());
+        final List<String[]> records = message.getRecords();
+
+        List<ResolvedHint> resolvedHints = new ArrayList<>();
+        for(int row = 0; row <= records.size(); row++) {
+            String[] record = records.get(row);
+            for(int col = 5; col <= record.length; col++) {
+                String cell = record[col];
+                int permIdx = hashedPermutations.indexOf(cell);
+                if(permIdx >= 0) {
+                    resolvedHints.add(new ResolvedHint(row, col, permutations.get(permIdx)));
+                }
+            }
+        }
+        tellMaster(new Master.ReceivePermutationHashMessage(resolvedHints));
     }
 
     private void handle(CurrentClusterState message) {
@@ -241,6 +255,16 @@ public class Worker extends AbstractLoggingActor {
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
+    protected class ResolvedHint implements Serializable {
+        private static final long serialVersionUID = 1243040942748609598L;
+        int row;
+        int column;
+        String resolvedValue;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class WelcomeMessage implements Serializable {
         private static final long serialVersionUID = 8343040942748609598L;
         private BloomFilter welcomeData;
@@ -259,7 +283,8 @@ public class Worker extends AbstractLoggingActor {
     @AllArgsConstructor
     public static class BuildPermutationHashMessage implements Serializable {
         private static final long serialVersionUID = 8343040942748609599L;
-        private String permutation;
+        private List<String> permutations;
+        private List<String[]> records;
     }
 
     @Data
@@ -268,6 +293,5 @@ public class Worker extends AbstractLoggingActor {
     public static class CrackPasswordMessage implements Serializable {
         private static final long serialVersionUID = 1343040942748609599L;
         private String[] record;
-        private Map<String, String> permutationHashes;
     }
 }

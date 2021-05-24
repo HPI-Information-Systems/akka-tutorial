@@ -2,6 +2,8 @@ package de.hpi.ddm.actors;
 
 import java.io.Serializable;
 import java.util.*;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
@@ -68,13 +70,13 @@ public class Master extends AbstractLoggingActor {
 	private int totalNumberOfPermutationTasks = 0;
 	private int totalNumberOfProcessedPermutationTasks = 0;
 	private boolean finishedReadingPasswordCharsSubsets = false;
-	private boolean startCalculatingPermutations = false;
+	private int totalNumberOfPermutations = 0;
 	private int totalNumberOfCalculatedHashes = 0;
-	private List<String> permutations = new ArrayList<>();
-	private Map<String,String> permutationHashes = new HashMap<>(); // <hash, permutation>
+
+	private boolean finishedStartingCalculationOfPermutationHashed = false;
 
 	private boolean finishedCalculatingPermutationHashes = false;
-	private List<String[]> readRecords = new ArrayList<>();
+	private List<String[]> records = new ArrayList<>();
 
 	private int totalNumberOfResolvedRecords = 0;
 
@@ -106,12 +108,11 @@ public class Master extends AbstractLoggingActor {
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class ReceivePermutationHashMessage implements Serializable {
 		private static final long serialVersionUID = 8343040942748609588L;
-		private String permutation;
-		private String hash;
+		private List<Worker.ResolvedHint> resolvedHints;
 	}
 
 	@Data @NoArgsConstructor @AllArgsConstructor
-	public static class ReceiveResoledRecordMessage implements Serializable {
+	public static class ReceiveResolvedRecordMessage implements Serializable {
 		private static final long serialVersionUID = 8344040942748609588L;
 		private String record;
 	}
@@ -130,14 +131,14 @@ public class Master extends AbstractLoggingActor {
 				.match(String.class, this::handle)
 				.match(ReceivePermutationsMessage.class, this::handle)
 				.match(ReceivePermutationHashMessage.class, this::handle)
-				.match(ReceiveResoledRecordMessage.class, this::handle)
+				.match(ReceiveResolvedRecordMessage.class, this::handle)
 				// TODO: Add further messages here to share work between Master and Worker actors
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
 
-	protected void handle(ReceiveResoledRecordMessage message) {
-		System.out.println("CrackPasswordMessage message from worker " + message);
+	protected void handle(ReceiveResolvedRecordMessage message) {
+		System.out.println("ReceiveResolvedRecordMessage message from worker " + message);
 		this.collector.tell(new Collector.CollectMessage(message.getRecord()), this.self());
 		totalNumberOfResolvedRecords++;
 		if(totalNumberOfResolvedRecords == totalNumberOfRecords){
@@ -150,31 +151,47 @@ public class Master extends AbstractLoggingActor {
 		this.reader.tell(new Reader.ReadMessage(), this.self());
 	}
 
+	private static <T> Stream<List<T>> batches(List<T> source, int length) {
+		if (length <= 0)
+			throw new IllegalArgumentException("length = " + length);
+		int size = source.size();
+		if (size <= 0)
+			return Stream.empty();
+		int fullChunks = (size - 1) / length;
+		return IntStream.range(0, fullChunks + 1).mapToObj(
+				n -> source.subList(n * length, n == fullChunks ? size : (n + 1) * length));
+	}
+
+
 	protected void handle(ReceivePermutationsMessage message) {
-		permutations.addAll(message.getPermutations());
+		System.out.println("ReceivePermutationsMessage from worker " + message.getPermutations().size());
 		totalNumberOfProcessedPermutationTasks++;
+		totalNumberOfPermutations += message.getPermutations().size();
+
 		if(finishedReadingPasswordCharsSubsets && totalNumberOfProcessedPermutationTasks == totalNumberOfPermutationTasks) {
-			permutations.forEach(p -> {
-				this.workers.get(workerIdx).tell(new Worker.BuildPermutationHashMessage(p), this.self());
-				workerIdx = (workerIdx + 1) % this.workers.size();
-			});
+			finishedStartingCalculationOfPermutationHashed= true;
 		}
+		batches(message.getPermutations(), 100000).forEach(permutationsBatch -> {
+			this.workers.get(workerIdx).tell(new Worker.BuildPermutationHashMessage(permutationsBatch, records), this.self());
+			workerIdx = (workerIdx + 1) % this.workers.size();
+		});
 	}
 
 	protected void handle(ReceivePermutationHashMessage message) {
-		permutationHashes.put(message.getHash(), message.getPermutation());
+		List<Worker.ResolvedHint> resolvedHints = message.resolvedHints;
+		resolvedHints.forEach(hint -> {
+			String[] record = records.get(hint.getRow());
+			record[hint.getColumn()] = hint.getResolvedValue();
+			records.set(hint.getRow(), record);
+		});
 		totalNumberOfCalculatedHashes++;
-		if(totalNumberOfCalculatedHashes == permutationHashes.size()) {
+		if(finishedStartingCalculationOfPermutationHashed && totalNumberOfCalculatedHashes == totalNumberOfPermutations) {
 			finishedCalculatingPermutationHashes = true;
-			readRecords.forEach(r -> {
-				processRecord(r);
+			records.forEach(record -> {
+				this.workers.get(workerIdx).tell(new Worker.CrackPasswordMessage(record), this.self());
+				workerIdx = (workerIdx + 1) % this.workers.size();
 			});
 		}
-	}
-
-	private void processRecord(String[] record){
-		this.workers.get(workerIdx).tell(new Worker.CrackPasswordMessage(record,permutationHashes), this.self());
-		workerIdx = (workerIdx + 1) % this.workers.size();
 	}
 
 	protected void handle(BatchMessage message) {
@@ -194,44 +211,25 @@ public class Master extends AbstractLoggingActor {
 		// b) Memory reduction: If the batches are processed sequentially, the memory consumption can be kept constant; if the entire input is read into main memory, the memory consumption scales at least linearly with the input size.
 		// - It is your choice, how and if you want to make use of the batched inputs. Simply aggregate all batches in the Master and start the processing afterwards, if you wish.
 
-		if(!startCalculatingPermutations){
-			startCalculatingPermutations = true;
-			if(message.getLines().isEmpty()){
-				terminate();
-			}
-			String passwordChars = message.getLines().get(0)[2];
-			for(int i = 0; i < passwordChars.length() ; i++){
-				String passwordCharsSubset = new StringBuilder(passwordChars).deleteCharAt(i).toString();
-				this.workers.get(workerIdx).tell(new Worker.BuildPermutationsMessage(passwordCharsSubset), this.self());
-				workerIdx = (workerIdx + 1) % this.workers.size();
-				totalNumberOfPermutationTasks++;
-			}
-			finishedReadingPasswordCharsSubsets = true;
-		}
-
-		totalNumberOfRecords += message.getLines().size();
+		String passwordChars = null;
 
 		if (message.getLines().isEmpty()) {
 			finishedReadingRecords = true;
-			return;
+		} else {
+			if(passwordChars == null) {
+				passwordChars = message.getLines().get(0)[2];
+				for(int i = 0; i < passwordChars.length() ; i++){
+					String passwordCharsSubset = new StringBuilder(passwordChars).deleteCharAt(i).toString();
+					this.workers.get(workerIdx).tell(new Worker.BuildPermutationsMessage(passwordCharsSubset), this.self());
+					workerIdx = (workerIdx + 1) % this.workers.size();
+					totalNumberOfPermutationTasks++;
+				}
+				finishedReadingPasswordCharsSubsets = true;
+			}
+			totalNumberOfRecords += message.getLines().size();
+			records.addAll(message.getLines());
+			this.reader.tell(new Reader.ReadMessage(), this.self());
 		}
-
-		if(finishedCalculatingPermutationHashes){
-			message.getLines().forEach(r -> {
-				processRecord(r);
-			});
-		}
-		else {
-			readRecords.addAll(message.getLines());
-		}
-
-		
-		// TODO: Send (partial) results to the Collector
-
-		
-		// TODO: Fetch further lines from the Reader
-		this.reader.tell(new Reader.ReadMessage(), this.self());
-		
 	}
 	
 	protected void terminate() {
