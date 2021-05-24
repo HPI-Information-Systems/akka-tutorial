@@ -149,6 +149,7 @@ public class Master extends AbstractLoggingActor {
 		this.reader.tell(new Reader.ReadMessage(), this.self());
 	}
 
+	// Source of batches helper method is https://stackoverflow.com/questions/12026885/is-there-a-common-java-utility-to-break-a-list-into-batches
 	private static <T> Stream<List<T>> batches(List<T> source, int length) {
 		if (length <= 0)
 			throw new IllegalArgumentException("length = " + length);
