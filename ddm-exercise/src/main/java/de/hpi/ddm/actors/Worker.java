@@ -18,7 +18,7 @@ import akka.cluster.ClusterEvent.MemberRemoved;
 import akka.cluster.ClusterEvent.MemberUp;
 import akka.cluster.Member;
 import akka.cluster.MemberStatus;
-import de.hpi.ddm.actors.Master.HashSolutionMessage;
+import de.hpi.ddm.actors.Master.HintHashSolutionMessage;
 import de.hpi.ddm.structures.BloomFilter;
 import de.hpi.ddm.systems.MasterSystem;
 import lombok.AllArgsConstructor;
@@ -244,10 +244,8 @@ public class Worker extends AbstractLoggingActor {
 			Worker.shiftPwdPermutation(this.currentPasswordIndices, this.alphabet.length);
 		}
 		if(this.currentlyTriedPasswordCombinations < this.maxPasswordCombinations){
-			this.log().info("Finished working on Password Permutation Batch");
 			getSender().tell(new FinishedWorkingOnPasswordCrackingBatchMessage(this.passwordIndex), getSelf());
 		} else {
-			this.log().info("Finished working on Password Permutation Package");
 			getSender().tell(new FinishedPermutationsMessage(), getSelf());
 		}
 	}
@@ -259,15 +257,12 @@ public class Worker extends AbstractLoggingActor {
 		for (String permutationMember : permutationSubset) {
 			String hash = Worker.hash(permutationMember);
 			if (this.hashes.contains(hash)) {
-				this.log().info("Found match");
-				getSender().tell(new HashSolutionMessage(hash, permutationMember, this.passwordIndex), getSelf());
+				getSender().tell(new HintHashSolutionMessage(hash, permutationMember, this.passwordIndex), getSelf());
 			}
 		}
 		if (end == this.permutations.size()) {
-			this.log().info("Finished working on Permutations");
 			getSender().tell(new FinishedPermutationsMessage(), getSelf());
 		} else {
-			this.log().info("Finished working on Permutation Batch");
 			getSender().tell(new ReadyForMoreMessage(this.passwordIndex), getSelf());
 		}
 	}

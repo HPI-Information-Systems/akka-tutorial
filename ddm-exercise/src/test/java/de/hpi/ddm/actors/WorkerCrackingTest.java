@@ -14,7 +14,7 @@ import org.junit.Test;
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.testkit.javadsl.TestKit;
-import de.hpi.ddm.actors.Master.HashSolutionMessage;
+import de.hpi.ddm.actors.Master.HintHashSolutionMessage;
 import de.hpi.ddm.actors.Worker.CrackNextNHintPermutationsMessage;
 import de.hpi.ddm.actors.Worker.FinishedPermutationsMessage;
 import de.hpi.ddm.actors.Worker.ReadyForMoreMessage;
@@ -61,7 +61,7 @@ public class WorkerCrackingTest {
 				worker.tell(new HintHashesMessage(hashes), finishCrackingPrope.getRef());
 				worker.tell(new CrackNextNHintPermutationsMessage(1), finishCrackingPrope.getRef());
 				within(Duration.ofSeconds(4), () -> {
-					finishCrackingPrope.expectMsgClass(HashSolutionMessage.class);
+					finishCrackingPrope.expectMsgClass(HintHashSolutionMessage.class);
 					finishCrackingPrope.expectMsgClass(FinishedPermutationsMessage.class);
 					return null;
 				});
@@ -83,7 +83,7 @@ public class WorkerCrackingTest {
 				worker.tell(new HintHashesMessage(hashes), finishCrackingPrope.getRef());
 				worker.tell(new CrackNextNHintPermutationsMessage(1), finishCrackingPrope.getRef());
 				within(Duration.ofSeconds(4), () -> {
-					finishCrackingPrope.expectMsgClass(HashSolutionMessage.class);
+					finishCrackingPrope.expectMsgClass(HintHashSolutionMessage.class);
 					finishCrackingPrope.expectMsgClass(ReadyForMoreMessage.class);
 					finishCrackingPrope.expectNoMessage();
 					return null;
@@ -106,7 +106,7 @@ public class WorkerCrackingTest {
 				worker.tell(new HintHashesMessage(hashes), finishCrackingPrope.getRef());
 				worker.tell(new CrackNextNHintPermutationsMessage(20), finishCrackingPrope.getRef());
 				within(Duration.ofSeconds(4), () -> {
-					finishCrackingPrope.expectMsgClass(HashSolutionMessage.class);
+					finishCrackingPrope.expectMsgClass(HintHashSolutionMessage.class);
 					finishCrackingPrope.expectMsgClass(FinishedPermutationsMessage.class);
 					finishCrackingPrope.expectNoMessage();
 					return null;
@@ -131,12 +131,12 @@ public class WorkerCrackingTest {
 				worker.tell(new HintHashesMessage(hashes), finishCrackingPrope.getRef());
 				within(Duration.ofSeconds(4), () -> {
 					worker.tell(new CrackNextNHintPermutationsMessage(2), finishCrackingPrope.getRef());
-					finishCrackingPrope.expectMsgClass(HashSolutionMessage.class);
+					finishCrackingPrope.expectMsgClass(HintHashSolutionMessage.class);
 					finishCrackingPrope.expectMsgClass(ReadyForMoreMessage.class);
 					worker.tell(new CrackNextNHintPermutationsMessage(2), finishCrackingPrope.getRef());
 					finishCrackingPrope.expectMsgClass(ReadyForMoreMessage.class);
 					worker.tell(new CrackNextNHintPermutationsMessage(2), finishCrackingPrope.getRef());
-					finishCrackingPrope.expectMsgClass(HashSolutionMessage.class);
+					finishCrackingPrope.expectMsgClass(HintHashSolutionMessage.class);
 					finishCrackingPrope.expectMsgClass(FinishedPermutationsMessage.class);
 					return null;
 				});

@@ -17,6 +17,7 @@ public class PasswordIntel implements Serializable {
 	
     private String alphabet;
     private String user;
+    private int id;
     private String pwdHash;
     private String pwdSolution;
     private int pwdLength;
@@ -26,6 +27,7 @@ public class PasswordIntel implements Serializable {
     private HashSet<Character> knownFalseChars;
     
     public PasswordIntel(String[] csvLine) {
+        this.id = Integer.parseInt(csvLine[0]);
         this.user = csvLine[1];
         this.alphabet = csvLine[2];
         this.pwdLength = Integer.parseInt(csvLine[3]);
@@ -76,5 +78,21 @@ public class PasswordIntel implements Serializable {
             }
         }
         return reducedAlphabet.toCharArray();
+    }
+
+    private String stringArrayToString(String[] arr){
+        String str = "";
+        for(int i = 0; i < arr.length; ++i){
+            str += arr[i];
+            if(i < arr.length - 1){
+                str += ";";
+            }
+        }
+        return str;
+    }
+
+    public String toString(){
+        String str = "" + this.id + ";" + this.user + ";" + this.alphabet + ";" + this.pwdLength + ";" + this.pwdSolution + ";" + this.stringArrayToString(this.hintSolutions);
+        return str;
     }
 }

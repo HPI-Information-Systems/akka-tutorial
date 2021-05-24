@@ -33,6 +33,7 @@ public class Master extends AbstractLoggingActor {
         this.reader = reader;
         this.collector = collector;
         this.workers = new ArrayList<>();
+        this.idleWorkers = new LinkedList<>();
         this.lines = new ArrayList<>();
         this.currentPasswordHintCrackingIndex = 0;
         this.initHintCrackingConfigMessageQueue = new LinkedList<>();
@@ -72,7 +73,7 @@ public class Master extends AbstractLoggingActor {
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class HashSolutionMessage implements Serializable {
+    public static class HintHashSolutionMessage implements Serializable {
         private static final long serialVersionUID = 3303081601659723997L;
         private String hash;
         private String clearText;
@@ -97,6 +98,7 @@ public class Master extends AbstractLoggingActor {
     private final ActorRef reader;
     private final ActorRef collector;
     private final List<ActorRef> workers;
+    private final Queue<ActorRef> idleWorkers;
     private final ActorRef largeMessageProxy;
     private final BloomFilter welcomeData;
     private final List<String[]> lines;
@@ -106,10 +108,7 @@ public class Master extends AbstractLoggingActor {
     private final Queue<Worker.InitHintCrackingConfigurationMessage> initHintCrackingConfigMessageQueue;
     private final Queue<Worker.InitPwdCrackingConfigurationMessage> initPwdCrackingConfigMessageQueue;
     private boolean finishedDistributingHintCrackingJobs = false;
-	private boolean finishedDistributingPasswordCrackingJobs = false;
-    private int foundHints = 0;
-    private int foundPasswords = 0;
-    private boolean crackedAllPassword = false;
+    private boolean readAllLines = false;
 
     private long startTime;
 
@@ -135,7 +134,7 @@ public class Master extends AbstractLoggingActor {
                 .match(Terminated.class, this::handle)
                 .match(RegistrationMessage.class, this::handle)
                 .match(Worker.ReadyForMoreMessage.class, this::handle)
-                .match(HashSolutionMessage.class, this::handle)
+                .match(HintHashSolutionMessage.class, this::handle)
                 .match(Worker.FinishedPermutationsMessage.class, this::handle)
                 .match(PasswordSolutionMessage.class, this::handle)
                 .match(Worker.FinishedWorkingOnPasswordCrackingBatchMessage.class, this::handle)
@@ -162,34 +161,6 @@ public class Master extends AbstractLoggingActor {
             this.lines.addAll(lines);
             this.reader.tell(new Reader.ReadMessage(), this.self());
         }
-
-        // TODO: This is where the task begins:
-        // - The Master received the first batch of input records.
-        // - To receive the next batch, we need to send another ReadMessage to the reader.
-        // - If the received BatchMessage is empty, we have seen all data for this task.
-        // - We need a clever protocol that forms sub-tasks from the seen records, distributes the tasks to the known workers and manages the results.
-        //   -> Additional messages, maybe additional actors, code that solves the subtasks, ...
-        //   -> The code in this handle function needs to be re-written.
-        // - Once the entire processing is done, this.terminate() needs to be called.
-
-        // Info: Why is the input file read in batches?
-        // a) Latency hiding: The Reader is implemented such that it reads the next batch of data from disk while at the same time the requester of the current batch processes this batch.
-        // b) Memory reduction: If the batches are processed sequentially, the memory consumption can be kept constant; if the entire input is read into main memory, the memory consumption scales at least linearly with the input size.
-        // - It is your choice, how and if you want to make use of the batched inputs. Simply aggregate all batches in the Master and start the processing afterwards, if you wish.
-
-
-		/*
-		// TODO: Process the lines with the help of the worker actors
-		for (String[] line : message.getLines())
-			this.log().error("Need help processing: {}", Arrays.toString(line));
-		
-		// TODO: Send (partial) results to the Collector
-		this.collector.tell(new Collector.CollectMessage("If I had results, this would be one."), this.self());
-		
-		// TODO: Fetch further lines from the Reader
-		this.reader.tell(new Reader.ReadMessage(), this.self());
-		*/
-
     }
 
     boolean generateNextHintCrackingTaskSet() {
@@ -221,6 +192,15 @@ public class Master extends AbstractLoggingActor {
         return true;
     }
 
+    boolean solvedAllPasswords() {
+        for(PasswordIntel pwd : this.passwordIntels){
+            if(pwd.getPwdSolution() == null){
+                return false;
+            }
+        }
+        return true;
+    }
+
     boolean generateNextPasswordCrackingTaskSet() {
         if (!this.initPwdCrackingConfigMessageQueue.isEmpty()) {
             return true;
@@ -230,8 +210,6 @@ public class Master extends AbstractLoggingActor {
             PasswordIntel currentPassword = this.passwordIntels[i];
             boolean solvedAllHints = currentPassword.getUncrackedHashCounter() == 0;
             if (solvedAllHints && currentPassword.getPwdSolution() == null) {
-                foundReadyAndUnsolvedPassword = true;
-                // TODO: Use this for optimization: Clear the current pwd cracking job queue if the master receives the pwd solution for the this.currentPasswordCrackingIndex
                 this.currentPasswordCrackingIndex = i;
                 int startingPermutationAsNumber = 0;
                 char[] alphabetOfPassword = currentPassword.getAlphabetOfPwd();
@@ -239,9 +217,10 @@ public class Master extends AbstractLoggingActor {
 				while(didNotOverflow) {
 					int[] alphabetIndices = new int[currentPassword.getPwdLength()];
 					didNotOverflow = Worker.numberToPermutation(startingPermutationAsNumber, alphabetOfPassword.length, currentPassword.getPwdLength(), alphabetIndices);
-					if (didNotOverflow) {
+					if (!didNotOverflow) {
 						break;
 					}
+                    foundReadyAndUnsolvedPassword = true;
 					Worker.InitPwdCrackingConfigurationMessage message = new Worker.InitPwdCrackingConfigurationMessage(alphabetOfPassword,
 							alphabetIndices,
 							PACKAGE_SIZE,
@@ -264,18 +243,18 @@ public class Master extends AbstractLoggingActor {
 
     void handle(FinishedReadingMessage message) {
         // Init intels
+        this.readAllLines = true;
         this.passwordIntels = new PasswordIntel[this.lines.size()];
 
         for (String[] csvLine : this.lines) {
             int index = Integer.parseInt(csvLine[0]) - 1;
             this.passwordIntels[index] = new PasswordIntel(csvLine);
         }
+
         for (ActorRef worker : this.workers) {
             // Ensure we have generated enough tasks.
             this.tellWorkerNextJob(worker);
         }
-
-        this.log().info("Send initial jobs.");
     }
 
     void tellNextHintCrackingPart(ActorRef worker) {
@@ -304,7 +283,7 @@ public class Master extends AbstractLoggingActor {
             worker.tell(this.getHintCrackMessage(), getSelf());
         } else {
         	this.finishedDistributingHintCrackingJobs = true;
-            this.log().info("No more task is available");
+        	this.tellWorkerNextJob(worker);
         }
     }
 
@@ -317,40 +296,44 @@ public class Master extends AbstractLoggingActor {
     		// Tell the worker to start.
 			worker.tell(this.getPasswordCrackMessage(), getSelf());
 		} else {
-    		this.finishedDistributingPasswordCrackingJobs = true;
+    	    // As all hints are cracked and there currently no password cracking task available, but that worker to idle.
+            this.idleWorkers.add(worker);
 		}
 	}
 
 	void tellWorkerNextJob(ActorRef worker){
-    	if(this.finishedDistributingHintCrackingJobs){
-    		this.tellNextPasswordCrackingJob(worker);
-		} else if(this.finishedDistributingPasswordCrackingJobs){
+    	if(!this.finishedDistributingHintCrackingJobs){
     		this.tellNextHintCrackingPart(worker);
+		} else {
+    	    // If no hint jobs are available anymore try to give the worker a password cracking job.
+    		this.tellNextPasswordCrackingJob(worker);
 		}
     	// No jobs are available anymore. Lets wait for the remaining jobs.
 	}
 
-    void handle(HashSolutionMessage message) {
+    void handle(HintHashSolutionMessage message) {
         String clearText = message.getClearText();
         String hash = message.getHash();
         int index = message.getPasswordIndex();
-        this.foundHints++;
-
         PasswordIntel currentPwd = this.passwordIntels[index];
         currentPwd.setUncrackedHashCounter(currentPwd.getUncrackedHashCounter() - 1);
         char missingChar = currentPwd.addFalseChar(clearText, hash);
-        this.log().info("Found hash for hint " + hash + " for password at index {}. The hint is {} thus {} is missing. Currently cracked hints: {}", index, clearText, Character.toString(missingChar), this.foundHints);
+        this.log().info("Found hash for hint " + hash + ", index {}, clear text {}, {} is missing.", index, clearText, Character.toString(missingChar));
         if (index == this.currentPasswordHintCrackingIndex && currentPwd.getUncrackedHashCounter() == 0) {
             this.initHintCrackingConfigMessageQueue.clear();
+            this.log().info("Found all hints for index {}", index);
+        }
+        if(currentPwd.getUncrackedHashCounter() == 0){
+            // As a passwords hints are cracked and this creates new pwd cracking jobs try to deliver them to the idle workers.
+            while(!this.idleWorkers.isEmpty()){
+                this.tellWorkerNextJob(this.idleWorkers.remove());
+            }
         }
     }
 
     void handle(PasswordSolutionMessage message) {
         String clearText = message.getClearText();
-        String hash = message.getHash();
         int index = message.getPasswordIndex();
-        this.foundPasswords++;
-
         PasswordIntel currentPwd = this.passwordIntels[index];
         currentPwd.setPwdClearText(clearText);
         this.log().info("Found hash for pwd {}: {}", index, clearText);
@@ -364,10 +347,17 @@ public class Master extends AbstractLoggingActor {
             }
         }
         if(!foundUncracked){
-            this.crackedAllPassword = true;
-            this.log().info("Found all password clear texts!!!!!!!!!!!!!!");
-            // TODO: once we reached this stage, print all the pwds via the collector actor and shut down the clusters
+            this.log().info("Found all password clear texts!");
+            this.sendSolutionsToCollector();
+            this.terminate();
         }
+    }
+
+    void sendSolutionsToCollector(){
+        for(PasswordIntel pwdIntel : this.passwordIntels){
+            this.collector.tell(new Collector.CollectMessage(pwdIntel.toString()), getSelf());
+        }
+        // Finally print everything
     }
 
     void handle(Worker.ReadyForMoreMessage message) {
@@ -420,8 +410,10 @@ public class Master extends AbstractLoggingActor {
         this.log().info("Registered {}", this.sender());
 
         this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new Worker.WelcomeMessage(this.welcomeData), this.sender()), this.self());
-
-        // TODO: Assign some work to registering workers. Note that the processing of the global task might have already started.
+        if(this.readAllLines){
+            // only pass a task to a new worker if all lines have been read.
+            this.tellWorkerNextJob(this.sender());
+        }
     }
 
     protected void handle(Terminated message) {
