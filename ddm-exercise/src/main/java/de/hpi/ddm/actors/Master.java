@@ -129,10 +129,8 @@ public class Master extends AbstractLoggingActor {
 				.match(Terminated.class, this::handle)
 				.match(RegistrationMessage.class, this::handle)
 				.match(String.class, this::handle)
-				.match(ReceivePermutationsMessage.class, this::handle)
 				.match(ReceivePermutationHashMessage.class, this::handle)
 				.match(ReceiveResolvedRecordMessage.class, this::handle)
-				// TODO: Add further messages here to share work between Master and Worker actors
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -163,7 +161,7 @@ public class Master extends AbstractLoggingActor {
 	}
 
 
-	protected void handle(ReceivePermutationsMessage message) {
+	/*protected void handle(ReceivePermutationsMessage message) {
 		System.out.println("ReceivePermutationsMessage from worker " + message.getPermutations().size());
 		totalNumberOfProcessedPermutationTasks++;
 		totalNumberOfPermutations += message.getPermutations().size();
@@ -175,9 +173,13 @@ public class Master extends AbstractLoggingActor {
 			this.workers.get(workerIdx).tell(new Worker.BuildPermutationHashMessage(permutationsBatch, records), this.self());
 			workerIdx = (workerIdx + 1) % this.workers.size();
 		});
-	}
+	}*/
 
 	protected void handle(ReceivePermutationHashMessage message) {
+		System.out.println("ReceivePermutationHashMessage from worker ");
+
+		totalNumberOfProcessedPermutationTasks++;
+
 		List<Worker.ResolvedHint> resolvedHints = message.resolvedHints;
 		resolvedHints.forEach(hint -> {
 			String[] record = records.get(hint.getRow());
@@ -185,7 +187,7 @@ public class Master extends AbstractLoggingActor {
 			records.set(hint.getRow(), record);
 		});
 		totalNumberOfCalculatedHashes++;
-		if(finishedStartingCalculationOfPermutationHashed && totalNumberOfCalculatedHashes == totalNumberOfPermutations) {
+		if(finishedReadingPasswordCharsSubsets && totalNumberOfProcessedPermutationTasks == totalNumberOfPermutationTasks) {
 			finishedCalculatingPermutationHashes = true;
 			records.forEach(record -> {
 				this.workers.get(workerIdx).tell(new Worker.CrackPasswordMessage(record), this.self());
@@ -220,7 +222,7 @@ public class Master extends AbstractLoggingActor {
 				passwordChars = message.getLines().get(0)[2];
 				for(int i = 0; i < passwordChars.length() ; i++){
 					String passwordCharsSubset = new StringBuilder(passwordChars).deleteCharAt(i).toString();
-					this.workers.get(workerIdx).tell(new Worker.BuildPermutationsMessage(passwordCharsSubset), this.self());
+					this.workers.get(workerIdx).tell(new Worker.BuildPermutationsMessage(passwordCharsSubset, records), this.self());
 					workerIdx = (workerIdx + 1) % this.workers.size();
 					totalNumberOfPermutationTasks++;
 				}

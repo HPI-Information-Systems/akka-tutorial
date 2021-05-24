@@ -96,9 +96,7 @@ public class Worker extends AbstractLoggingActor {
                 .match(MemberRemoved.class, this::handle)
                 .match(WelcomeMessage.class, this::handle)
                 .match(BuildPermutationsMessage.class, this::handle)
-                .match(BuildPermutationHashMessage.class, this::handle)
                 .match(CrackPasswordMessage.class, this::handle)
-                // TODO: Add further messages here to share work between Master and Worker actors
                 .matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
                 .build();
     }
@@ -121,6 +119,7 @@ public class Worker extends AbstractLoggingActor {
 		final String passwordHash = record[4];
         List<String> hints = Arrays.asList(record).subList(5, record.length);
 
+        System.out.println("CrackPasswordMessage calculate not included chars");
         List<Character> notIncludedChars = new ArrayList<>();
         hints.stream().forEach(h -> {
             for (char c : passwordChars.toCharArray()) {
@@ -130,14 +129,21 @@ public class Worker extends AbstractLoggingActor {
             }
         });
 
+        System.out.println("CrackPasswordMessage calculate included chars");
 		String possiblePasswordChars = passwordChars;
 		for(char c : notIncludedChars) {
 			possiblePasswordChars = possiblePasswordChars.replace(String.valueOf(c), "");
 		}
-        List<String> possiblePasswords = generateCombinations(passwordChars.toCharArray(), passwordLength);
+
+        System.out.println("CrackPasswordMessage possiblePasswordChars " + possiblePasswordChars);
+        List<String> possiblePasswords = generateCombinations(possiblePasswordChars.toCharArray(), passwordLength);
+        System.out.println("CrackPasswordMessage possiblePasswords " + possiblePasswords.size());
+
+        System.out.println("CrackPasswordMessage possiblePasswords calculate hashes");
 		Map<String, String> possiblePasswordsHashed = new HashMap<>();
 		possiblePasswords.stream().forEach(p -> possiblePasswordsHashed.put(hash(p), p));
 		String password = possiblePasswordsHashed.get(passwordHash);
+        System.out.println("CrackPasswordMessage password " + password);
 
 		List<String> solutionRecord = new ArrayList<>();
 		for(int i = 0; i <= 3; i++) {
@@ -146,34 +152,44 @@ public class Worker extends AbstractLoggingActor {
 		solutionRecord.add(password);
 		solutionRecord.addAll(hints);
 
+        System.out.println("CrackPasswordMessage finished " + solutionRecord);
 		tellMaster(new Master.ReceiveResolvedRecordMessage(String.join(";", solutionRecord)));
     }
 
     private void handle(BuildPermutationsMessage message) {
-        System.out.println("BuildPermutationsMessage from master " + message.passwordCharsSubset);
+        System.out.println("BuildPermutationsMessage from master " + message.getPasswordCharsSubset());
         List<String> permutations = new ArrayList<>();
-        this.heapPermutation(message.passwordCharsSubset.toCharArray(), message.passwordCharsSubset.toCharArray().length, permutations);
-        tellMaster(new Master.ReceivePermutationsMessage(permutations));
-    }
-
-
-    private void handle(BuildPermutationHashMessage message) {
-        System.out.println("BuildPermutationHashMessage from master " + message.getPermutations().size());
-        final List<String> permutations = message.getPermutations();
-        final List<String> hashedPermutations = permutations.stream().map(p -> hash(p)).collect(Collectors.toList());
-        final List<String[]> records = message.getRecords();
+        this.heapPermutation(message.getPasswordCharsSubset().toCharArray(), message.getPasswordCharsSubset().toCharArray().length, permutations);
 
         List<ResolvedHint> resolvedHints = new ArrayList<>();
-        for(int row = 0; row <= records.size(); row++) {
+        List<String[]> records = message.getRecords();
+
+        Set<String> hashes = new HashSet<>();
+        for(int row = 0; row < records.size(); row++) {
             String[] record = records.get(row);
-            for(int col = 5; col <= record.length; col++) {
+            for(int col = 5; col < record.length; col++) {
                 String cell = record[col];
-                int permIdx = hashedPermutations.indexOf(cell);
-                if(permIdx >= 0) {
-                    resolvedHints.add(new ResolvedHint(row, col, permutations.get(permIdx)));
-                }
+                hashes.add(cell);
             }
         }
+
+        System.out.println("BuildPermutationsMessage before resolving hashes");
+        permutations.forEach(p -> {
+            String hash = hash(p);
+            if(hashes.contains(hash)){
+                for(int row = 0; row < records.size(); row++) {
+                    String[] record = records.get(row);
+                    for(int col = 5; col < record.length; col++) {
+                        String cell = record[col];
+                        if(hash.equals(cell)) {
+                            resolvedHints.add(new ResolvedHint(row, col, p));
+                        }
+                    }
+                }
+            }
+        });
+        System.out.println("BuildPermutationsMessage after resolving hashes");
+
         tellMaster(new Master.ReceivePermutationHashMessage(resolvedHints));
     }
 
@@ -276,6 +292,7 @@ public class Worker extends AbstractLoggingActor {
     public static class BuildPermutationsMessage implements Serializable {
         private static final long serialVersionUID = 8343040942748609599L;
         private String passwordCharsSubset;
+        private List<String[]> records;
     }
 
     @Data
