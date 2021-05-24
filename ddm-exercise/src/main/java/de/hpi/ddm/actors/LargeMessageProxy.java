@@ -7,8 +7,6 @@ import java.util.Arrays;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.HashMap;
 import java.util.Map.Entry;
-import java.util.zip.DeflaterOutputStream;
-import java.util.zip.InflaterOutputStream;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
