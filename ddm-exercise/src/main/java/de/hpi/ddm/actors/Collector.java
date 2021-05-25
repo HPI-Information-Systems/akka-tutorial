@@ -70,6 +70,7 @@ public class Collector extends AbstractLoggingActor {
 	}
 	
 	protected void handle(PrintMessage message) {
+		this.log().info("results.size() = {}", results.size());
 		this.results.forEach(result -> this.log().info("{}", result));
 	}
 }

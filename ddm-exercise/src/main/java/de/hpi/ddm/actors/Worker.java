@@ -1,11 +1,5 @@
 package de.hpi.ddm.actors;
 
-import java.io.Serializable;
-import java.io.UnsupportedEncodingException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.List;
-
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
 import akka.actor.PoisonPill;
@@ -14,13 +8,22 @@ import akka.cluster.Cluster;
 import akka.cluster.ClusterEvent.CurrentClusterState;
 import akka.cluster.ClusterEvent.MemberRemoved;
 import akka.cluster.ClusterEvent.MemberUp;
+import akka.cluster.Member;
+import akka.cluster.MemberStatus;
 import de.hpi.ddm.structures.BloomFilter;
 import de.hpi.ddm.systems.MasterSystem;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import akka.cluster.Member;
-import akka.cluster.MemberStatus;
+
+import java.io.Serializable;
+import java.io.UnsupportedEncodingException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Queue;
 
 public class Worker extends AbstractLoggingActor {
 
@@ -48,6 +51,17 @@ public class Worker extends AbstractLoggingActor {
 		private static final long serialVersionUID = 8343040942748609598L;
 		private BloomFilter welcomeData;
 	}
+
+	/**
+	 * A message with the password entry to crack a password for and the number of hints to crack before
+	 * cracking the password.
+	 */
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class WorkMessage implements Serializable {
+		private static final long serialVersionUID = 7196274048688399161L;
+		private Master.PasswordEntry passwordEntry;
+		private int numHintsToCrack;
+	}
 	
 	/////////////////
 	// Actor State //
@@ -56,7 +70,7 @@ public class Worker extends AbstractLoggingActor {
 	private Member masterSystem;
 	private final Cluster cluster;
 	private final ActorRef largeMessageProxy;
-	private long registrationTime;
+//	private long registrationTime;
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -84,8 +98,8 @@ public class Worker extends AbstractLoggingActor {
 				.match(CurrentClusterState.class, this::handle)
 				.match(MemberUp.class, this::handle)
 				.match(MemberRemoved.class, this::handle)
-				.match(WelcomeMessage.class, this::handle)
-				// TODO: Add further messages here to share work between Master and Worker actors
+//				.match(WelcomeMessage.class, this::handle)
+				.match(WorkMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -104,33 +118,156 @@ public class Worker extends AbstractLoggingActor {
 	private void register(Member member) {
 		if ((this.masterSystem == null) && member.hasRole(MasterSystem.MASTER_ROLE)) {
 			this.masterSystem = member;
-			
+
 			this.getContext()
 				.actorSelection(member.address() + "/user/" + Master.DEFAULT_NAME)
 				.tell(new Master.RegistrationMessage(), this.self());
-			
-			this.registrationTime = System.currentTimeMillis();
+
+//			this.registrationTime = System.currentTimeMillis();
 		}
 	}
-	
+
 	private void handle(MemberRemoved message) {
 		if (this.masterSystem.equals(message.member()))
 			this.self().tell(PoisonPill.getInstance(), ActorRef.noSender());
 	}
-	
-	private void handle(WelcomeMessage message) {
-		final long transmissionTime = System.currentTimeMillis() - this.registrationTime;
-		this.log().info("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
+
+//	private void handle(WelcomeMessage message) {
+//		final long transmissionTime = System.currentTimeMillis() - this.registrationTime;
+//		this.log().warning("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
+//	}
+
+	private void handle(WorkMessage workMessage) {
+		Master.PasswordEntry passwordEntry = workMessage.getPasswordEntry();
+		this.log().warning("Cracking password entry with id = {} and name = {}...", passwordEntry.getId(), passwordEntry.getName());
+		String remainingUniquePasswordChars = passwordEntry.getPasswordChars();  // the chars from this string will be excluded as we crack hints
+
+		// Crack hints, if any.
+		int crackedHintsCounter = 0;
+		while (crackedHintsCounter < workMessage.getNumHintsToCrack()) {
+			this.log().debug("Cracking hint {}...", crackedHintsCounter + 1);
+			boolean hasCrackedHint = false;
+			String hintHash = passwordEntry.getHintHashes().get(crackedHintsCounter);
+
+			// Exclude a char, generate permutations of the remaining ones and compare their hashes with the hash
+			// of the hint.
+			for (char c : remainingUniquePasswordChars.toCharArray()) {
+				this.log().debug("Excluding {}...", c);
+				String charsForPerms = passwordEntry.getPasswordChars().replaceAll(String.valueOf(c), "");
+				this.log().debug("charsForPerms = " + charsForPerms);
+				List<String> perms = new ArrayList<>();
+				heapPermutation(charsForPerms.toCharArray(), passwordEntry.getPasswordChars().length() - 1, perms);
+				this.log().debug("Generated {} perms", perms.size());
+
+				for (String perm : perms) {
+					String permHash = hash(perm);
+					if (permHash.equals(hintHash)) {
+						hasCrackedHint = true;
+						break;
+					}
+				}
+
+				if (hasCrackedHint) {
+					// Remove the char missing in the hint from the remaining unique password chars.
+					remainingUniquePasswordChars = remainingUniquePasswordChars.replaceAll(String.valueOf(c), "");
+					crackedHintsCounter++;
+					break;
+				} else {
+					// TODO: throw
+				}
+			}
+		}
+
+		this.log().debug("Cracked {} hints, remaining unique password chars = " + remainingUniquePasswordChars);
+		this.log().debug("Cracking password...");
+
+		// Derive all combinations of possible unique password chars from the remaining unique password chars.
+		// E.g., if the actual number of unique password chars = 2, then for the `remainingUniquePasswordChars` = "ABCD",
+		// we will generate "AB", "AC", "AD", "BC", "BD", "CD". I.e., if we did not crack some hints (in this example, 2)
+		// to precisely determine what unique characters the password consists of (or if there were not enough hints to
+		// do so), knowing there are only 2 unique characters in the password, we can generate all unique 2-char
+		// combinations from the characters we know might be the actual unique password characters, and then,
+		// for each such combination, generate all possible passwords of length `passwordLength` as sequences
+		// of these 2 characters.
+		// Assumption: `remainingUniquePasswordChars` is sorted (it is guaranteed to be sorted if the chars in
+		// `passwordEntry.passwordChars` string are sorted.
+
+		// The actual number of unique password characters (e.g., 2).
+		int numUniquePasswordChars = passwordEntry.getPasswordChars().length() - passwordEntry.getHintHashes().size();
+
+		Queue<String> uniquePasswordCharCombs = new LinkedList<>();
+		for (char c : remainingUniquePasswordChars.toCharArray()) {
+			uniquePasswordCharCombs.add(String.valueOf(c));
+		}
+		Queue<String> helperQueue = new LinkedList<>();
+
+		// Until we have combinations of the required length, take each stored unique comb of chars from the queue
+		// and append each unique char to it, put back in the queue, repeat.
+		while (uniquePasswordCharCombs.peek().length() != numUniquePasswordChars) {
+			while (!uniquePasswordCharCombs.isEmpty()) {
+				String comb = uniquePasswordCharCombs.remove();
+				// Since we assume `remainingUniquePasswordChars` is sorted, we only need to append chars that alphabetically
+				// appear after the last char of the combination, e.g., if the comb is "ABC", the first char we would want to
+				// append is "D", for "BCD" it would be "E", and so on.
+				char[] arr = comb.toCharArray();
+				char lastChar = arr[arr.length - 1];
+				int ix = remainingUniquePasswordChars.indexOf(lastChar) + 1;
+				for (int i = ix; i < remainingUniquePasswordChars.length(); i++) {
+					helperQueue.add(comb + remainingUniquePasswordChars.toCharArray()[i]);
+				}
+			}
+			// Just swap the links rather then copying values from queue to queue and clearing the helper
+			// queue / creating a new helper queue.
+			Queue<String> tmp = uniquePasswordCharCombs;
+			uniquePasswordCharCombs = helperQueue;
+			helperQueue = tmp;
+		}
+		this.log().debug("Generated {} combinations", uniquePasswordCharCombs.size());
+
+		// Iterate over the resulting unique combinations and generate possible passwords
+		for (String uniquePasswordCharComb : uniquePasswordCharCombs) {
+			this.log().debug("Generating and checking passwords for {} comb", uniquePasswordCharComb);
+			// The algorithm below is similar to that used above for working out the possible combinations of unique
+			// password chars, but this time we append each char to the already generated sequences.
+			Queue<String> possiblePasswords = new LinkedList<>();
+			for (char c : uniquePasswordCharComb.toCharArray()) {
+				possiblePasswords.add(String.valueOf(c));
+			}
+			helperQueue = new LinkedList<>();
+
+			while (possiblePasswords.peek().length() != passwordEntry.getPasswordLength()) {
+				while (!possiblePasswords.isEmpty()) {
+					String comb = possiblePasswords.remove();
+					for (char c : uniquePasswordCharComb.toCharArray()) {
+						helperQueue.add(comb + c);
+					}
+				}
+				Queue<String> tmp = possiblePasswords;
+				possiblePasswords = helperQueue;
+				helperQueue = tmp;
+			}
+			this.log().debug("Generated {} possible passwords", possiblePasswords.size());
+
+			for (String possiblePassword : possiblePasswords) {
+				if (hash(possiblePassword).equals(passwordEntry.getPasswordHash())) {
+					// Send the cracked password to the master.
+					this.log().warning("Cracked password for id = {} and name = {}, sending result to master...", passwordEntry.getId(), passwordEntry.getName());
+					this.getSender().tell(new Master.CrackedPasswordMessage(passwordEntry.getId() + " " + passwordEntry.getName() + " " + possiblePassword), this.getSelf());
+					return;
+				}
+			}
+		}
+		// TODO: The password might not be cracked, throw?
 	}
-	
+
 	private String hash(String characters) {
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");
 			byte[] hashedBytes = digest.digest(String.valueOf(characters).getBytes("UTF-8"));
-			
-			StringBuffer stringBuffer = new StringBuffer();
-			for (int i = 0; i < hashedBytes.length; i++) {
-				stringBuffer.append(Integer.toString((hashedBytes[i] & 0xff) + 0x100, 16).substring(1));
+
+			StringBuilder stringBuffer = new StringBuilder();
+			for (byte hashedByte : hashedBytes) {
+				stringBuffer.append(Integer.toString((hashedByte & 0xff) + 0x100, 16).substring(1));
 			}
 			return stringBuffer.toString();
 		}
@@ -138,31 +275,31 @@ public class Worker extends AbstractLoggingActor {
 			throw new RuntimeException(e.getMessage());
 		}
 	}
-	
+
 	// Generating all permutations of an array using Heap's Algorithm
 	// https://en.wikipedia.org/wiki/Heap's_algorithm
 	// https://www.geeksforgeeks.org/heaps-algorithm-for-generating-permutations/
-	private void heapPermutation(char[] a, int size, int n, List<String> l) {
+	private void heapPermutation(char[] a, int size, List<String> l) {
 		// If size is 1, store the obtained permutation
 		if (size == 1)
 			l.add(new String(a));
 
 		for (int i = 0; i < size; i++) {
-			heapPermutation(a, size - 1, n, l);
+			heapPermutation(a, size - 1, l);
 
 			// If size is odd, swap first and last element
+			char temp;
 			if (size % 2 == 1) {
-				char temp = a[0];
+				temp = a[0];
 				a[0] = a[size - 1];
-				a[size - 1] = temp;
 			}
 
 			// If size is even, swap i-th and last element
 			else {
-				char temp = a[i];
+				temp = a[i];
 				a[i] = a[size - 1];
-				a[size - 1] = temp;
 			}
+			a[size - 1] = temp;
 		}
 	}
 }
