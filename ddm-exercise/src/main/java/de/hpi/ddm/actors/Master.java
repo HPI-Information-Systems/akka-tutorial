@@ -318,10 +318,10 @@ public class Master extends AbstractLoggingActor {
         PasswordIntel currentPwd = this.passwordIntels[index];
         currentPwd.setUncrackedHashCounter(currentPwd.getUncrackedHashCounter() - 1);
         char missingChar = currentPwd.addFalseChar(clearText, hash);
-        this.log().info("Found hash for hint " + hash + ", index {}, clear text {}, {} is missing.", index, clearText, Character.toString(missingChar));
+        // this.log().info("Found hash for hint " + hash + ", index {}, clear text {}, {} is missing.", index, clearText, Character.toString(missingChar));
         if (index == this.currentPasswordHintCrackingIndex && currentPwd.getUncrackedHashCounter() == 0) {
             this.initHintCrackingConfigMessageQueue.clear();
-            this.log().info("Found all hints for index {}", index);
+            // this.log().info("Found all hints for index {}", index);
         }
         if(currentPwd.getUncrackedHashCounter() == 0){
             // As a passwords hints are cracked and this creates new pwd cracking jobs try to deliver them to the idle workers.
@@ -336,7 +336,7 @@ public class Master extends AbstractLoggingActor {
         int index = message.getPasswordIndex();
         PasswordIntel currentPwd = this.passwordIntels[index];
         currentPwd.setPwdClearText(clearText);
-        this.log().info("Found hash for pwd {}: {}", index, clearText);
+        // this.log().info("Found hash for pwd {}: {}", index, clearText);
         if (index == this.currentPasswordCrackingIndex) {
             this.initPwdCrackingConfigMessageQueue.clear();
         }
@@ -347,7 +347,7 @@ public class Master extends AbstractLoggingActor {
             }
         }
         if(!foundUncracked){
-            this.log().info("Found all password clear texts!");
+            // this.log().info("Found all password clear texts!");
             this.sendSolutionsToCollector();
             this.terminate();
         }
@@ -407,7 +407,7 @@ public class Master extends AbstractLoggingActor {
     protected void handle(RegistrationMessage message) {
         this.context().watch(this.sender());
         this.workers.add(this.sender());
-        this.log().info("Registered {}", this.sender());
+        // this.log().info("Registered {}", this.sender());
 
         this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new Worker.WelcomeMessage(this.welcomeData), this.sender()), this.self());
         if(this.readAllLines){
@@ -419,6 +419,6 @@ public class Master extends AbstractLoggingActor {
     protected void handle(Terminated message) {
         this.context().unwatch(message.getActor());
         this.workers.remove(message.getActor());
-        this.log().info("Unregistered {}", message.getActor());
+        // this.log().info("Unregistered {}", message.getActor());
     }
 }
