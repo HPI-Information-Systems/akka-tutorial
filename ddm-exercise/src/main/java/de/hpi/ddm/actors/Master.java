@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
+import java.math.BigInteger;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -27,7 +28,7 @@ public class Master extends AbstractLoggingActor {
 		this.collector = collector;
 		this.workers = new ArrayList<>();
 		this.largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
-//		this.welcomeData = welcomeData;
+		this.welcomeData = welcomeData;
 	}
 
 	////////////////////
@@ -71,7 +72,7 @@ public class Master extends AbstractLoggingActor {
 	private final ActorRef collector;
 	private final List<ActorRef> workers;
 	private final ActorRef largeMessageProxy;
-//	private final BloomFilter welcomeData;
+	private final BloomFilter welcomeData;
 
 	private long startTime;
 
@@ -89,7 +90,7 @@ public class Master extends AbstractLoggingActor {
 	private Set<ActorRef> availableWorkers;
 	private boolean isAlreadyAwaitingReadMessage;
 
-	@Data
+	@Data @NoArgsConstructor
 	static class PasswordEntry {
 		private int id;
 		private String name;
@@ -143,7 +144,7 @@ public class Master extends AbstractLoggingActor {
 		this.startTime = System.currentTimeMillis();
 
 		this.reader.tell(new Reader.ReadMessage(), this.self());
-		isAlreadyAwaitingReadMessage = true;
+		this.isAlreadyAwaitingReadMessage = true;
 	}
 
 	protected void handle(RegistrationMessage message) {
@@ -153,23 +154,25 @@ public class Master extends AbstractLoggingActor {
 		this.log().info("Registered {}", this.sender());
 
 		// TODO: do we really need to send a welcome message? Maybe remove it altogether?
-//		this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new Worker.WelcomeMessage(this.welcomeData), this.sender()), this.self());
+		this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new Worker.WelcomeMessage(this.welcomeData), this.sender()), this.self());
 
-		if (!isAnyWorkLeft && !unassignedWork.isEmpty()) {
-			System.out.println("NO WORK LEFT");
+		if (!this.isAnyWorkLeft && !this.unassignedWork.isEmpty()) {
+			this.log().warning("NO WORK LEFT");
 			return;
 		}
 
 		// Assign some work to registering workers. Note that the processing of the global task might have already started.
-		if (!unassignedWork.isEmpty()) {
+		if (!this.unassignedWork.isEmpty()) {
 			// Give the new worker some work.
 			this.busyWorkers.add(this.sender());
-			this.sender().tell(new Worker.WorkMessage(unassignedWork.remove(), numHintsToCrack), this.getSelf());
+			this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(
+					new Worker.WorkMessage(this.unassignedWork.remove(), this.numHintsToCrack), this.sender()
+					), this.getSelf());
 		} else {  // no unassigned work but there's some work left
 			this.availableWorkers.add(this.sender());
-			if (!isAlreadyAwaitingReadMessage) {
+			if (!this.isAlreadyAwaitingReadMessage) {
 				this.reader.tell(new Reader.ReadMessage(), this.getSelf());
-				isAlreadyAwaitingReadMessage = true;
+				this.isAlreadyAwaitingReadMessage = true;
 			}
 		}
 	}
@@ -192,13 +195,13 @@ public class Master extends AbstractLoggingActor {
 
 		this.log().warning("Received BatchMessage from " + this.getSender());
 
-		isAlreadyAwaitingReadMessage = false;
+		this.isAlreadyAwaitingReadMessage = false;
 
 		// Stop fetching lines from the Reader once an empty BatchMessage was received; we have seen all data then
 		if (message.getLines().isEmpty()) {
-			if (!busyWorkers.isEmpty()) {
+			if (!this.busyWorkers.isEmpty()) {
 				this.log().warning("No more work left");
-				isAnyWorkLeft = false;
+				this.isAnyWorkLeft = false;
 			} else {
 				// This can happen if all our workers (e.g., 2 workers) finish cracking their last passwords approx.
 				// at the same time. In this case, since we remove workers from `busyWorkers` when a `CrackedPasswordMessage`
@@ -213,25 +216,27 @@ public class Master extends AbstractLoggingActor {
 			return;
 		}
 
-		unassignedWork.addAll(message.getLines().stream().map(PasswordEntry::new).collect(Collectors.toList()));
+		this.unassignedWork.addAll(message.getLines().stream().map(PasswordEntry::new).collect(Collectors.toList()));
 
-		if (!hasInitializedNumHintsToCrack) {
+		if (!this.hasInitializedNumHintsToCrack) {
 			// Work out number of hints to crack before cracking the password, this needs to be done only once since
 			// all password entries follow the same pattern (i.e., they feature the same password length, possible chars
 			// (a.k.a. alphabet chars a.k.a. passwordChars), number of hints, etc.).
 			// TODO: implement the algorithm from the "Cracking estimation difficulty.pdf" file
-//			PasswordEntry passwordEntry = unassignedWork.peek();
-			numHintsToCrack = 0;
-			hasInitializedNumHintsToCrack = true;
-			this.log().warning("Workers will crack {} hints before cracking a password", numHintsToCrack);
+			PasswordEntry passwordEntry = unassignedWork.peek();
+			this.numHintsToCrack = getNumHintsToCrack(passwordEntry.getPasswordChars().length(), passwordEntry.getHintHashes().size(), passwordEntry.getPasswordLength());
+			this.hasInitializedNumHintsToCrack = true;
+			this.log().warning("Workers will crack {} hint(s) before cracking password", this.numHintsToCrack);
 		}
 
 		// Send the unassigned work to the available workers (1 password entry per available worker).
 		Queue<ActorRef> availableWorkersQueue = new LinkedList<>(availableWorkers);
-		while (!availableWorkersQueue.isEmpty() && !unassignedWork.isEmpty()) {
-			PasswordEntry passwordEntry = unassignedWork.remove();  // poll() can be used as well
+		while (!availableWorkersQueue.isEmpty() && !this.unassignedWork.isEmpty()) {
+			PasswordEntry passwordEntry = this.unassignedWork.remove();  // poll() can be used as well
 			ActorRef availableWorker = availableWorkersQueue.remove();
-			availableWorker.tell(new Worker.WorkMessage(passwordEntry, numHintsToCrack), this.getSelf());
+			this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(
+					new Worker.WorkMessage(passwordEntry, this.numHintsToCrack), availableWorker
+			), this.getSelf());
 			busyWorkers.add(availableWorker);
 			availableWorkers.remove(availableWorker);
 		}
@@ -239,7 +244,7 @@ public class Master extends AbstractLoggingActor {
 		if (!availableWorkersQueue.isEmpty()) {  // if some available workers are left with no work
 			// Get more work from the reader.
 			this.sender().tell(new Reader.ReadMessage(), this.getSelf());
-			isAlreadyAwaitingReadMessage = true;
+			this.isAlreadyAwaitingReadMessage = true;
 		}  // else: if no free workers are available, but there is still unassigned work left, that's fine,
 		// the workers finished with their jobs will receive such work as a reply to `CrackedPasswordMessage`.
 	}
@@ -247,32 +252,34 @@ public class Master extends AbstractLoggingActor {
 	private void handle(CrackedPasswordMessage crackedPasswordMessage) {
 		// Send partial results to the collector.
 		this.log().warning("Received result {}, sending result to collector...", crackedPasswordMessage.getResult());
-		collector.tell(new Collector.CollectMessage(crackedPasswordMessage.getResult()), this.self());
+		this.collector.tell(new Collector.CollectMessage(crackedPasswordMessage.getResult()), this.self());
 
-		if (isAnyWorkLeft) {
-			if (!unassignedWork.isEmpty()) {
+		if (this.isAnyWorkLeft) {
+			if (!this.unassignedWork.isEmpty()) {
 				// Send some unassigned work to the worker.
-				PasswordEntry passwordEntry = unassignedWork.remove();  // `poll()` can be used as well
-				this.sender().tell(new Worker.WorkMessage(passwordEntry, numHintsToCrack), this.getSelf());
+				this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(
+						new Worker.WorkMessage(this.unassignedWork.remove(), this.numHintsToCrack), this.sender()
+				), this.getSelf());
 			} else {
-				busyWorkers.remove(this.sender());  // the worker will become busy again when/if it gets assigned some work in `handle(BatchMessage message)`
-				availableWorkers.add(this.sender());
+				this.busyWorkers.remove(this.sender());  // the worker will become busy again when/if it gets assigned some work in `handle(BatchMessage message)`
+				this.availableWorkers.add(this.sender());
 				// Request more work from the reader.
-				if (!isAlreadyAwaitingReadMessage) {
+				if (!this.isAlreadyAwaitingReadMessage) {
 					this.reader.tell(new Reader.ReadMessage(), getSelf());
-					isAlreadyAwaitingReadMessage = true;
+					this.isAlreadyAwaitingReadMessage = true;
 				}
 			}
 		} else {
-			if (!unassignedWork.isEmpty()) {
+			if (!this.unassignedWork.isEmpty()) {
 				// Send some unassigned work to the worker.
-				PasswordEntry passwordEntry = unassignedWork.remove();
-				this.sender().tell(new Worker.WorkMessage(passwordEntry, numHintsToCrack), this.getSelf());
+				this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(
+						new Worker.WorkMessage(this.unassignedWork.remove(), this.numHintsToCrack), this.sender()
+				), this.getSelf());
 			} else {
-				busyWorkers.remove(sender());
+				this.busyWorkers.remove(sender());
 				this.log().warning("No work left, removed worker {}, busy workers left = {}", this.sender(), busyWorkers.size());
 
-				if (busyWorkers.isEmpty()) {
+				if (this.busyWorkers.isEmpty()) {
 					this.log().warning("Neither any work nor busy workers left, terminating...");
 					terminate();
 				}
@@ -301,5 +308,30 @@ public class Master extends AbstractLoggingActor {
 
 		long executionTime = System.currentTimeMillis() - this.startTime;
 		this.log().info("Algorithm finished in {} ms", executionTime);
+	}
+
+	private int getNumHintsToCrack(int numAlphabetChars, int numHints, int passwordLength) {
+		int numUniquePasswordChars = numAlphabetChars - numHints;
+		for (int numCrackedHints = 0; numCrackedHints < numHints; numCrackedHints++) {
+			BigInteger nextHintDifficulty = BigInteger.valueOf(numAlphabetChars - numCrackedHints).multiply(factorial(numAlphabetChars - 1));
+			BigInteger passwordDifficulty = factorial(numAlphabetChars - numCrackedHints).divide(
+					factorial(numUniquePasswordChars).multiply(factorial(numHints - numCrackedHints))).multiply(BigInteger.valueOf((long) Math.pow(numUniquePasswordChars, passwordLength)));
+			BigInteger passwordDifficultyAfterNextHint = nextHintDifficulty.add(factorial(numAlphabetChars - numCrackedHints - 1).divide(
+					factorial(numUniquePasswordChars).multiply(factorial(numHints - numCrackedHints - 1))).multiply(BigInteger.valueOf((long) Math.pow(numUniquePasswordChars, passwordLength))));
+			if (passwordDifficulty.compareTo(passwordDifficultyAfterNextHint) < 0) {
+				return numCrackedHints;
+			}
+		}
+		return numHints;
+	}
+
+	/**
+	 * Use BigInteger to be able to compute the factorial for numbers over 20.
+	 */
+	private BigInteger factorial(int n) {
+		BigInteger result = BigInteger.ONE;
+		for (int i = 2; i <= n; i++)
+			result = result.multiply(BigInteger.valueOf(i));
+		return result;
 	}
 }

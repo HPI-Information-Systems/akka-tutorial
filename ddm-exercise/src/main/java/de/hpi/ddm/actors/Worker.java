@@ -20,10 +20,8 @@ import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Queue;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class Worker extends AbstractLoggingActor {
 
@@ -70,7 +68,7 @@ public class Worker extends AbstractLoggingActor {
 	private Member masterSystem;
 	private final Cluster cluster;
 	private final ActorRef largeMessageProxy;
-//	private long registrationTime;
+	private long registrationTime;
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -98,7 +96,7 @@ public class Worker extends AbstractLoggingActor {
 				.match(CurrentClusterState.class, this::handle)
 				.match(MemberUp.class, this::handle)
 				.match(MemberRemoved.class, this::handle)
-//				.match(WelcomeMessage.class, this::handle)
+				.match(WelcomeMessage.class, this::handle)
 				.match(WorkMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
@@ -123,7 +121,7 @@ public class Worker extends AbstractLoggingActor {
 				.actorSelection(member.address() + "/user/" + Master.DEFAULT_NAME)
 				.tell(new Master.RegistrationMessage(), this.self());
 
-//			this.registrationTime = System.currentTimeMillis();
+			this.registrationTime = System.currentTimeMillis();
 		}
 	}
 
@@ -132,52 +130,40 @@ public class Worker extends AbstractLoggingActor {
 			this.self().tell(PoisonPill.getInstance(), ActorRef.noSender());
 	}
 
-//	private void handle(WelcomeMessage message) {
-//		final long transmissionTime = System.currentTimeMillis() - this.registrationTime;
-//		this.log().warning("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
-//	}
+	private void handle(WelcomeMessage message) {
+		final long transmissionTime = System.currentTimeMillis() - this.registrationTime;
+		this.log().warning("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
+	}
 
 	private void handle(WorkMessage workMessage) {
 		Master.PasswordEntry passwordEntry = workMessage.getPasswordEntry();
 		this.log().warning("Cracking password entry with id = {} and name = {}...", passwordEntry.getId(), passwordEntry.getName());
-		String remainingUniquePasswordChars = passwordEntry.getPasswordChars();  // the chars from this string will be excluded as we crack hints
 
 		// Crack hints, if any.
 		int crackedHintsCounter = 0;
-		while (crackedHintsCounter < workMessage.getNumHintsToCrack()) {
-			this.log().debug("Cracking hint {}...", crackedHintsCounter + 1);
-			boolean hasCrackedHint = false;
-			String hintHash = passwordEntry.getHintHashes().get(crackedHintsCounter);
+		List<String> hintHashes = new ArrayList<>(workMessage.getPasswordEntry().getHintHashes());
+		List<Character> remainingUniquePasswordCharsList = passwordEntry.getPasswordChars().chars().mapToObj(c -> (char) c).collect(Collectors.toList());
+		Iterator<Character> it = remainingUniquePasswordCharsList.iterator();  // the chars from this string will be excluded as we crack hints
 
-			// Exclude a char, generate permutations of the remaining ones and compare their hashes with the hash
-			// of the hint.
-			for (char c : remainingUniquePasswordChars.toCharArray()) {
-				this.log().debug("Excluding {}...", c);
-				String charsForPerms = passwordEntry.getPasswordChars().replaceAll(String.valueOf(c), "");
-				this.log().debug("charsForPerms = " + charsForPerms);
-				List<String> perms = new ArrayList<>();
-				heapPermutation(charsForPerms.toCharArray(), passwordEntry.getPasswordChars().length() - 1, perms);
-				this.log().debug("Generated {} perms", perms.size());
+		while (it.hasNext() && crackedHintsCounter < workMessage.getNumHintsToCrack()) {
+			char nextChar = it.next();
 
-				for (String perm : perms) {
-					String permHash = hash(perm);
-					if (permHash.equals(hintHash)) {
-						hasCrackedHint = true;
-						break;
-					}
-				}
-
-				if (hasCrackedHint) {
-					// Remove the char missing in the hint from the remaining unique password chars.
-					remainingUniquePasswordChars = remainingUniquePasswordChars.replaceAll(String.valueOf(c), "");
-					crackedHintsCounter++;
-					break;
-				} else {
-					// TODO: throw
-				}
+			// Exclude a char, generate permutations of the remaining ones, and compare the hashes of the permutations with those
+			// of the remaining uncracked hints.
+			this.log().debug("Excluding {}...", nextChar);
+			String charsForPerms = passwordEntry.getPasswordChars().replaceAll(String.valueOf(nextChar), "");
+			this.log().debug("charsForPerms = " + charsForPerms);
+			String permHash = permuteAndCompare(charsForPerms.toCharArray(), passwordEntry.getPasswordChars().length() - 1, hintHashes);
+			if (permHash == null) {
+				continue;
 			}
+			crackedHintsCounter++;
+			it.remove();
+			hintHashes.remove(permHash);
+			this.log().debug("Cracked hint, remaining unique password chars = " + remainingUniquePasswordCharsList);
 		}
 
+		String remainingUniquePasswordChars = remainingUniquePasswordCharsList.stream().map(String::valueOf).collect(Collectors.joining(""));
 		this.log().debug("Cracked {} hints, remaining unique password chars = " + remainingUniquePasswordChars);
 		this.log().debug("Cracking password...");
 
@@ -276,16 +262,27 @@ public class Worker extends AbstractLoggingActor {
 		}
 	}
 
+	/**
+	 * @return the hash of the permutation that matched one of the hint hashes
+	 */
 	// Generating all permutations of an array using Heap's Algorithm
 	// https://en.wikipedia.org/wiki/Heap's_algorithm
 	// https://www.geeksforgeeks.org/heaps-algorithm-for-generating-permutations/
-	private void heapPermutation(char[] a, int size, List<String> l) {
-		// If size is 1, store the obtained permutation
-		if (size == 1)
-			l.add(new String(a));
+	private String permuteAndCompare(char[] a, int size, List<String> hintHashes) {
+		// If size is 1, compare the hash of the obtained permutation with the hint hashes
+		String permHash;
+		if (size == 1) {
+			permHash = this.hash(new String(a));
+			if (hintHashes.contains(permHash)) {
+				return permHash;
+			}
+		}
 
 		for (int i = 0; i < size; i++) {
-			heapPermutation(a, size - 1, l);
+			permHash = permuteAndCompare(a, size - 1, hintHashes);
+			if (permHash != null) {
+				return permHash;
+			}
 
 			// If size is odd, swap first and last element
 			char temp;
@@ -301,5 +298,6 @@ public class Worker extends AbstractLoggingActor {
 			}
 			a[size - 1] = temp;
 		}
+		return null;
 	}
 }
