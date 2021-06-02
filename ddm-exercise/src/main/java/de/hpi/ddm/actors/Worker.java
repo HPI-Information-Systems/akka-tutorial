@@ -1,5 +1,12 @@
 package de.hpi.ddm.actors;
 
+import java.io.Serializable;
+import java.io.UnsupportedEncodingException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.*;
+import java.util.stream.Collectors;
+
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
 import akka.actor.PoisonPill;
@@ -12,16 +19,10 @@ import akka.cluster.Member;
 import akka.cluster.MemberStatus;
 import de.hpi.ddm.structures.BloomFilter;
 import de.hpi.ddm.systems.MasterSystem;
+import de.hpi.ddm.structures.PasswordEntry;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-
-import java.io.Serializable;
-import java.io.UnsupportedEncodingException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.*;
-import java.util.stream.Collectors;
 
 public class Worker extends AbstractLoggingActor {
 
@@ -57,7 +58,7 @@ public class Worker extends AbstractLoggingActor {
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class WorkMessage implements Serializable {
 		private static final long serialVersionUID = 7196274048688399161L;
-		private Master.PasswordEntry passwordEntry;
+		private PasswordEntry passwordEntry;
 		private int numHintsToCrack;
 	}
 	
@@ -136,7 +137,7 @@ public class Worker extends AbstractLoggingActor {
 	}
 
 	private void handle(WorkMessage workMessage) {
-		Master.PasswordEntry passwordEntry = workMessage.getPasswordEntry();
+		PasswordEntry passwordEntry = workMessage.getPasswordEntry();
 		this.log().warning("Cracking password entry with id = {} and name = {}...", passwordEntry.getId(), passwordEntry.getName());
 
 		// Crack hints, if any.

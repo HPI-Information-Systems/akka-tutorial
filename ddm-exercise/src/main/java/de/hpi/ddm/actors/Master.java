@@ -1,22 +1,24 @@
 package de.hpi.ddm.actors;
 
-import akka.actor.*;
-import de.hpi.ddm.structures.BloomFilter;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 import java.io.Serializable;
 import java.math.BigInteger;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import akka.actor.*;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import de.hpi.ddm.structures.BloomFilter;
+import de.hpi.ddm.structures.MasterState;
+import de.hpi.ddm.structures.PasswordEntry;
 public class Master extends AbstractLoggingActor {
 
 	////////////////////////
 	// Actor Construction //
 	////////////////////////
-	
+
 	public static final String DEFAULT_NAME = "master";
 
 	public static Props props(final ActorRef reader, final ActorRef collector, final BloomFilter welcomeData) {
@@ -24,11 +26,9 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	public Master(final ActorRef reader, final ActorRef collector, final BloomFilter welcomeData) {
-		this.reader = reader;
-		this.collector = collector;
-		this.workers = new ArrayList<>();
-		this.largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
-		this.welcomeData = welcomeData;
+		ActorRef largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
+		this.state = new MasterState(reader, collector, largeMessageProxy, welcomeData);
+
 	}
 
 	////////////////////
@@ -68,46 +68,8 @@ public class Master extends AbstractLoggingActor {
 	// Actor State //
 	/////////////////
 
-	private final ActorRef reader;
-	private final ActorRef collector;
-	private final List<ActorRef> workers;
-	private final ActorRef largeMessageProxy;
-	private final BloomFilter welcomeData;
-
-	private long startTime;
-
-
-	// Our fields
-	// ==========
-
-	// TODO: change to a state object with getters/setters?
-
-	private Queue<PasswordEntry> unassignedWork;
-	private int numHintsToCrack;  // num hints to crack before cracking a password
-	private boolean hasInitializedNumHintsToCrack;
-	private boolean isAnyWorkLeft;
-	private Set<ActorRef> busyWorkers;
-	private Set<ActorRef> availableWorkers;
-	private boolean isAlreadyAwaitingReadMessage;
-
-	@Data @NoArgsConstructor
-	static class PasswordEntry {
-		private int id;
-		private String name;
-		private String passwordChars;
-		private int passwordLength;
-		private String passwordHash;
-		private List<String> hintHashes;
-
-		public PasswordEntry(String[] line) {  // TODO: replace with parseFromLine()?
-			this.id = Integer.parseInt(line[0]);
-			this.name = line[1];
-			this.passwordChars = line[2];
-			this.passwordLength = Integer.parseInt(line[3]);
-			this.passwordHash = line[4];
-			this.hintHashes = Arrays.stream(line, 5, line.length).collect(Collectors.toList());
-		}
-	}
+	// State object holding all the state. :)
+	final MasterState state;
 
 	/////////////////////
 	// Actor Lifecycle //
@@ -116,12 +78,7 @@ public class Master extends AbstractLoggingActor {
 	@Override
 	public void preStart() {
 		Reaper.watchWithDefaultReaper(this);
-		unassignedWork = new LinkedList<>();
-		hasInitializedNumHintsToCrack = false;
-		isAnyWorkLeft = true;
-		busyWorkers = new HashSet<>();
-		availableWorkers = new HashSet<>();
-		isAlreadyAwaitingReadMessage = false;
+
 	}
 
 	////////////////////
@@ -131,77 +88,65 @@ public class Master extends AbstractLoggingActor {
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
-				.match(StartMessage.class, this::handle)
-				.match(RegistrationMessage.class, this::handle)
-				.match(BatchMessage.class, this::handle)
-				.match(CrackedPasswordMessage.class, this::handle)
-				.match(Terminated.class, this::handle)
-				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
-				.build();
+			.match(StartMessage.class, this::handle)
+			.match(RegistrationMessage.class, this::handle)
+			.match(BatchMessage.class, this::handle)
+			.match(CrackedPasswordMessage.class, this::handle)
+			.match(Terminated.class, this::handle)
+			.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
+			.build();
 	}
 
 	protected void handle(StartMessage message) {
-		this.startTime = System.currentTimeMillis();
+		this.state.setStartTime(System.currentTimeMillis());
 
-		this.reader.tell(new Reader.ReadMessage(), this.self());
-		this.isAlreadyAwaitingReadMessage = true;
+		this.state.getReader().tell(new Reader.ReadMessage(), this.self());
+		this.state.setAlreadyAwaitingReadMessage(true);
 	}
 
 	protected void handle(RegistrationMessage message) {
 		this.context().watch(this.sender());
-		this.availableWorkers.add(this.sender());
-		this.workers.add(this.sender());  // TODO: do we need `workers`? Maybe only use the sets with available and busy workers?
+		this.state.getAvailableWorkers().add(this.sender());
+		this.state.getWorkers().add(this.sender());  // TODO: do we need `workers`? Maybe only use the sets with available and busy workers?
 		this.log().info("Registered {}", this.sender());
 
 		// TODO: do we really need to send a welcome message? Maybe remove it altogether?
-		this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new Worker.WelcomeMessage(this.welcomeData), this.sender()), this.self());
+		this.state.getLargeMessageProxy().tell(
+			new LargeMessageProxy.LargeMessage<>(new Worker.WelcomeMessage(this.state.getWelcomeData()), this.sender()
+		), this.self());
 
-		if (!this.isAnyWorkLeft && !this.unassignedWork.isEmpty()) {
+		if (!this.state.isAnyWorkLeft() && !this.state.getUnassignedWork().isEmpty()) {
 			this.log().warning("NO WORK LEFT");
 			return;
 		}
 
 		// Assign some work to registering workers. Note that the processing of the global task might have already started.
-		if (!this.unassignedWork.isEmpty()) {
+		if (!this.state.getUnassignedWork().isEmpty()) {
 			// Give the new worker some work.
-			this.busyWorkers.add(this.sender());
-			this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(
-					new Worker.WorkMessage(this.unassignedWork.remove(), this.numHintsToCrack), this.sender()
-					), this.getSelf());
-		} else {  // no unassigned work but there's some work left
-			this.availableWorkers.add(this.sender());
-			if (!this.isAlreadyAwaitingReadMessage) {
-				this.reader.tell(new Reader.ReadMessage(), this.getSelf());
-				this.isAlreadyAwaitingReadMessage = true;
+			this.state.getBusyWorkers().add(this.sender());
+			this.state.getLargeMessageProxy().tell(new LargeMessageProxy.LargeMessage<>(
+				new Worker.WorkMessage(this.state.getUnassignedWork().remove(), this.state.getNumHintsToCrack()), this.sender()
+			), this.getSelf());
+		} else {
+			// no unassigned work but there's some work left
+			this.state.getAvailableWorkers().add(this.sender());
+			if (!this.state.isAlreadyAwaitingReadMessage()) {
+				this.state.getReader().tell(new Reader.ReadMessage(), this.getSelf());
+				this.state.setAlreadyAwaitingReadMessage(true);
 			}
 		}
 	}
 
 	protected void handle(BatchMessage message) {
+		this.log().info("Received BatchMessage from " + this.getSender());
 
-		// TODO: This is where the task begins:
-		// - The Master received the first batch of input records.
-		// - To receive the next batch, we need to send another ReadMessage to the reader.
-		// - If the received BatchMessage is empty, we have seen all data for this task.
-		// - We need a clever protocol that forms sub-tasks from the seen records, distributes the tasks to the known workers and manages the results.
-		//   -> Additional messages, maybe additional actors, code that solves the subtasks, ...
-		//   -> The code in this handle function needs to be re-written.
-		// - Once the entire processing is done, this.terminate() needs to be called.
+		this.state.setAlreadyAwaitingReadMessage(false);
 
-		// Info: Why is the input file read in batches?
-		// a) Latency hiding: The Reader is implemented such that it reads the next batch of data from disk while at the same time the requester of the current batch processes this batch.
-		// b) Memory reduction: If the batches are processed sequentially, the memory consumption can be kept constant; if the entire input is read into main memory, the memory consumption scales at least linearly with the input size.
-		// - It is your choice, how and if you want to make use of the batched inputs. Simply aggregate all batches in the Master and start the processing afterwards, if you wish.
-
-		this.log().warning("Received BatchMessage from " + this.getSender());
-
-		this.isAlreadyAwaitingReadMessage = false;
-
-		// Stop fetching lines from the Reader once an empty BatchMessage was received; we have seen all data then
+		// Stop fetching lines from the Reader once an empty BatchMessage was received; we have seen all data then.
 		if (message.getLines().isEmpty()) {
-			if (!this.busyWorkers.isEmpty()) {
-				this.log().warning("No more work left");
-				this.isAnyWorkLeft = false;
+			if (!this.state.getBusyWorkers().isEmpty()) {
+				this.log().info("No more work left");
+				this.state.setAnyWorkLeft(false);
 			} else {
 				// This can happen if all our workers (e.g., 2 workers) finish cracking their last passwords approx.
 				// at the same time. In this case, since we remove workers from `busyWorkers` when a `CrackedPasswordMessage`
@@ -216,71 +161,77 @@ public class Master extends AbstractLoggingActor {
 			return;
 		}
 
-		this.unassignedWork.addAll(message.getLines().stream().map(PasswordEntry::new).collect(Collectors.toList()));
+		this.state.getUnassignedWork().addAll(message.getLines().stream().map(PasswordEntry::parseFromLine).collect(Collectors.toList()));
 
-		if (!this.hasInitializedNumHintsToCrack) {
+		if (!this.state.hasInitializedNumHintsToCrack()) {
 			// Work out number of hints to crack before cracking the password, this needs to be done only once since
 			// all password entries follow the same pattern (i.e., they feature the same password length, possible chars
 			// (a.k.a. alphabet chars a.k.a. passwordChars), number of hints, etc.).
 			// TODO: implement the algorithm from the "Cracking estimation difficulty.pdf" file
-			PasswordEntry passwordEntry = unassignedWork.peek();
-			this.numHintsToCrack = getNumHintsToCrack(passwordEntry.getPasswordChars().length(), passwordEntry.getHintHashes().size(), passwordEntry.getPasswordLength());
-			this.hasInitializedNumHintsToCrack = true;
-			this.log().warning("Workers will crack {} hint(s) before cracking password", this.numHintsToCrack);
+			PasswordEntry passwordEntry = this.state.getUnassignedWork().peek();
+			this.state.setNumHintsToCrack(
+				getNumHintsToCrack(
+					passwordEntry.getPasswordChars().length(),
+					 passwordEntry.getHintHashes().size(),
+					passwordEntry.getPasswordLength()
+				)
+			);
+			this.state.hasInitializedNumHintsToCrack(true);
+			this.log().info("Workers will crack {} hint(s) before cracking password", this.state.getNumHintsToCrack());
 		}
 
 		// Send the unassigned work to the available workers (1 password entry per available worker).
-		Queue<ActorRef> availableWorkersQueue = new LinkedList<>(availableWorkers);
-		while (!availableWorkersQueue.isEmpty() && !this.unassignedWork.isEmpty()) {
-			PasswordEntry passwordEntry = this.unassignedWork.remove();  // poll() can be used as well
+		Queue<ActorRef> availableWorkersQueue = new LinkedList<>(this.state.getAvailableWorkers());
+		while (!availableWorkersQueue.isEmpty() && !this.state.getUnassignedWork().isEmpty()) {
+			PasswordEntry passwordEntry = this.state.getUnassignedWork().remove();  // poll() can be used as well
 			ActorRef availableWorker = availableWorkersQueue.remove();
-			this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(
-					new Worker.WorkMessage(passwordEntry, this.numHintsToCrack), availableWorker
+			this.state.getLargeMessageProxy().tell(new LargeMessageProxy.LargeMessage<>(
+				new Worker.WorkMessage(passwordEntry, this.state.getNumHintsToCrack()), availableWorker
 			), this.getSelf());
-			busyWorkers.add(availableWorker);
-			availableWorkers.remove(availableWorker);
+			this.state.getAvailableWorkers().remove(availableWorker);
+			this.state.getBusyWorkers().add(availableWorker);
 		}
 
 		if (!availableWorkersQueue.isEmpty()) {  // if some available workers are left with no work
 			// Get more work from the reader.
 			this.sender().tell(new Reader.ReadMessage(), this.getSelf());
-			this.isAlreadyAwaitingReadMessage = true;
+			this.state.setAlreadyAwaitingReadMessage(true);
 		}  // else: if no free workers are available, but there is still unassigned work left, that's fine,
 		// the workers finished with their jobs will receive such work as a reply to `CrackedPasswordMessage`.
 	}
 
 	private void handle(CrackedPasswordMessage crackedPasswordMessage) {
 		// Send partial results to the collector.
-		this.log().warning("Received result {}, sending result to collector...", crackedPasswordMessage.getResult());
-		this.collector.tell(new Collector.CollectMessage(crackedPasswordMessage.getResult()), this.self());
+		this.log().info("Received result {}, sending result to collector...", crackedPasswordMessage.getResult());
+		this.state.getCollector().tell(new Collector.CollectMessage(crackedPasswordMessage.getResult()), this.self());
 
-		if (this.isAnyWorkLeft) {
-			if (!this.unassignedWork.isEmpty()) {
+		if (this.state.isAnyWorkLeft()) {
+			if (!this.state.getUnassignedWork().isEmpty()) {
 				// Send some unassigned work to the worker.
-				this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(
-						new Worker.WorkMessage(this.unassignedWork.remove(), this.numHintsToCrack), this.sender()
+				this.state.getLargeMessageProxy().tell(new LargeMessageProxy.LargeMessage<>(
+						new Worker.WorkMessage(this.state.getUnassignedWork().remove(), this.state.getNumHintsToCrack()), this.sender()
 				), this.getSelf());
 			} else {
-				this.busyWorkers.remove(this.sender());  // the worker will become busy again when/if it gets assigned some work in `handle(BatchMessage message)`
-				this.availableWorkers.add(this.sender());
+				this.state.getBusyWorkers().remove(this.sender());  // the worker will become busy again when/if it gets assigned some work in `handle(BatchMessage message)`
+				this.state.getAvailableWorkers().add(this.sender());
 				// Request more work from the reader.
-				if (!this.isAlreadyAwaitingReadMessage) {
-					this.reader.tell(new Reader.ReadMessage(), getSelf());
-					this.isAlreadyAwaitingReadMessage = true;
+				if (!this.state.isAlreadyAwaitingReadMessage()) {
+					this.state.getReader().tell(new Reader.ReadMessage(), getSelf());
+					this.state.setAlreadyAwaitingReadMessage(true);
 				}
 			}
 		} else {
-			if (!this.unassignedWork.isEmpty()) {
+			if (!this.state.getUnassignedWork().isEmpty()) {
 				// Send some unassigned work to the worker.
-				this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(
-						new Worker.WorkMessage(this.unassignedWork.remove(), this.numHintsToCrack), this.sender()
+				this.state.getLargeMessageProxy().tell(new LargeMessageProxy.LargeMessage<>(
+					new Worker.WorkMessage(this.state.getUnassignedWork().remove(), this.state.getNumHintsToCrack()), this.sender()
 				), this.getSelf());
 			} else {
-				this.busyWorkers.remove(sender());
-				this.log().warning("No work left, removed worker {}, busy workers left = {}", this.sender(), busyWorkers.size());
+				this.state.getBusyWorkers().remove(sender());
+				this.log().info("No work left, removed worker {}, busy workers left = {}", this.sender(), this.state.getBusyWorkers().size());
 
-				if (this.busyWorkers.isEmpty()) {
-					this.log().warning("Neither any work nor busy workers left, terminating...");
+				if (this.state.getBusyWorkers().isEmpty()) {
+					this.log().info("Neither any work nor busy workers left, terminating...");
 					terminate();
 				}
 			}
@@ -289,24 +240,24 @@ public class Master extends AbstractLoggingActor {
 
 	protected void handle(Terminated message) {
 		this.context().unwatch(message.getActor());
-		this.workers.remove(message.getActor());
+		this.state.getWorkers().remove(message.getActor());
 		this.log().info("Unregistered {}", message.getActor());
 	}
 
 	protected void terminate() {
-		this.collector.tell(new Collector.PrintMessage(), this.self());
+		this.state.getCollector().tell(new Collector.PrintMessage(), this.self());
 
-		this.reader.tell(PoisonPill.getInstance(), ActorRef.noSender());
-		this.collector.tell(PoisonPill.getInstance(), ActorRef.noSender());
+		this.state.getReader().tell(PoisonPill.getInstance(), ActorRef.noSender());
+		this.state.getCollector().tell(PoisonPill.getInstance(), ActorRef.noSender());
 
-		for (ActorRef worker : this.workers) {
+		for (ActorRef worker : this.state.getWorkers()) {
 			this.context().unwatch(worker);
 			worker.tell(PoisonPill.getInstance(), ActorRef.noSender());
 		}
 
 		this.self().tell(PoisonPill.getInstance(), ActorRef.noSender());
 
-		long executionTime = System.currentTimeMillis() - this.startTime;
+		long executionTime = System.currentTimeMillis() - this.state.getStartTime();
 		this.log().info("Algorithm finished in {} ms", executionTime);
 	}
 
