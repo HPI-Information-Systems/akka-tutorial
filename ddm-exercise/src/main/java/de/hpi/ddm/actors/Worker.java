@@ -4,6 +4,7 @@ import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -29,7 +30,7 @@ public class Worker extends AbstractLoggingActor {
 	////////////////////////
 	// Actor Construction //
 	////////////////////////
-	
+
 	public static final String DEFAULT_NAME = "worker";
 
 	public static Props props() {
@@ -40,7 +41,7 @@ public class Worker extends AbstractLoggingActor {
 		this.cluster = Cluster.get(this.context().system());
 		this.largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
 	}
-	
+
 	////////////////////
 	// Actor Messages //
 	////////////////////
@@ -58,10 +59,11 @@ public class Worker extends AbstractLoggingActor {
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class WorkMessage implements Serializable {
 		private static final long serialVersionUID = 7196274048688399161L;
+		// If null, currently no work available.
 		private PasswordEntry passwordEntry;
 		private int numHintsToCrack;
 	}
-	
+
 	/////////////////
 	// Actor State //
 	/////////////////
@@ -70,7 +72,7 @@ public class Worker extends AbstractLoggingActor {
 	private final Cluster cluster;
 	private final ActorRef largeMessageProxy;
 	private long registrationTime;
-	
+
 	/////////////////////
 	// Actor Lifecycle //
 	/////////////////////
@@ -78,7 +80,7 @@ public class Worker extends AbstractLoggingActor {
 	@Override
 	public void preStart() {
 		Reaper.watchWithDefaultReaper(this);
-		
+
 		this.cluster.subscribe(this.self(), MemberUp.class, MemberRemoved.class);
 	}
 
@@ -94,13 +96,13 @@ public class Worker extends AbstractLoggingActor {
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
-				.match(CurrentClusterState.class, this::handle)
-				.match(MemberUp.class, this::handle)
-				.match(MemberRemoved.class, this::handle)
-				.match(WelcomeMessage.class, this::handle)
-				.match(WorkMessage.class, this::handle)
-				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
-				.build();
+			.match(CurrentClusterState.class, this::handle)
+			.match(MemberUp.class, this::handle)
+			.match(MemberRemoved.class, this::handle)
+			.match(WelcomeMessage.class, this::handle)
+			.match(WorkMessage.class, this::handle)
+			.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
+			.build();
 	}
 
 	private void handle(CurrentClusterState message) {
@@ -134,9 +136,25 @@ public class Worker extends AbstractLoggingActor {
 	private void handle(WelcomeMessage message) {
 		final long transmissionTime = System.currentTimeMillis() - this.registrationTime;
 		this.log().warning("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
+
+		// This worker has nothing to do for now, send request.
+		this.sender().tell(new Master.GetNextWorkItemMessage(), this.self());
 	}
 
-	private void handle(WorkMessage workMessage) {
+	private void handle(WorkMessage workMessage) throws Exception {
+		if (workMessage.getPasswordEntry() == null) {
+			this.log().debug("Got work message without content, trying again later...");
+			// Currently no work, ask master again later.
+			this.getContext().system().scheduler().scheduleOnce(
+				Duration.ofMillis(500),
+				this.sender(),
+				new Master.GetNextWorkItemMessage(),
+				this.getContext().dispatcher(),
+				this.self()
+			);
+			return;
+		}
+
 		PasswordEntry passwordEntry = workMessage.getPasswordEntry();
 		this.log().warning("Cracking password entry with id = {} and name = {}...", passwordEntry.getId(), passwordEntry.getName());
 
@@ -165,7 +183,7 @@ public class Worker extends AbstractLoggingActor {
 		}
 
 		String remainingUniquePasswordChars = remainingUniquePasswordCharsList.stream().map(String::valueOf).collect(Collectors.joining(""));
-		this.log().debug("Cracked {} hints, remaining unique password chars = " + remainingUniquePasswordChars);
+		this.log().debug("Cracked {} hints, remaining unique password chars = {}", crackedHintsCounter, remainingUniquePasswordChars);
 		this.log().debug("Cracking password...");
 
 		// Derive all combinations of possible unique password chars from the remaining unique password chars.
@@ -213,7 +231,7 @@ public class Worker extends AbstractLoggingActor {
 
 		// Iterate over the resulting unique combinations and generate possible passwords
 		for (String uniquePasswordCharComb : uniquePasswordCharCombs) {
-			this.log().debug("Generating and checking passwords for {} comb", uniquePasswordCharComb);
+			this.log().debug("Generating and checking passwords for combinations of {}.", uniquePasswordCharComb);
 			// The algorithm below is similar to that used above for working out the possible combinations of unique
 			// password chars, but this time we append each char to the already generated sequences.
 			Queue<String> possiblePasswords = new LinkedList<>();
@@ -233,18 +251,25 @@ public class Worker extends AbstractLoggingActor {
 				possiblePasswords = helperQueue;
 				helperQueue = tmp;
 			}
-			this.log().debug("Generated {} possible passwords", possiblePasswords.size());
+			this.log().debug("Generated {} possible passwords.", possiblePasswords.size());
 
 			for (String possiblePassword : possiblePasswords) {
 				if (hash(possiblePassword).equals(passwordEntry.getPasswordHash())) {
 					// Send the cracked password to the master.
 					this.log().warning("Cracked password for id = {} and name = {}, sending result to master...", passwordEntry.getId(), passwordEntry.getName());
-					this.getSender().tell(new Master.CrackedPasswordMessage(passwordEntry.getId() + " " + passwordEntry.getName() + " " + possiblePassword), this.getSelf());
+					this.getSender().tell(
+						new Master.CrackedPasswordMessage(passwordEntry.getId(), passwordEntry.getName(), possiblePassword),
+						this.getSelf()
+					);
+					this.getSender().tell(
+						new Master.GetNextWorkItemMessage(),
+						this.getSelf()
+					);
 					return;
 				}
 			}
 		}
-		// TODO: The password might not be cracked, throw?
+		throw new Exception("The password with hash " + passwordEntry.getPasswordHash() + " could not be cracked.");
 	}
 
 	private String hash(String characters) {

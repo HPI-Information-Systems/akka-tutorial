@@ -24,7 +24,8 @@ public class MasterState {
 	// Our fields
 	// ==========
 
-	private final Queue<PasswordEntry> unassignedWork = new LinkedList<>();
+	private final Queue<WorkItem> unassignedWorkItems = new LinkedList<>();
+	private final List<WorkItem> assignedWorkItems = new LinkedList<>();
 	private int numHintsToCrack;  // num hints to crack before cracking a password
 
 	@Accessors(fluent = true)
@@ -33,8 +34,6 @@ public class MasterState {
 	private boolean anyWorkLeft  = true;
 
 	private final Set<ActorRef> busyWorkers = new HashSet<>();
-
-	private final Set<ActorRef> availableWorkers = new HashSet<>();
 
 	private boolean alreadyAwaitingReadMessage = false;
 
@@ -47,5 +46,24 @@ public class MasterState {
 		this.collector = collector;
 		this.largeMessageProxy = largeMessageProxy;
 		this.welcomeData = welcomeData;
+	}
+
+	//////////////////
+	// Retrieval
+	//////////////////
+
+	public boolean hasUnassignedWorkItems() {
+		return !this.getUnassignedWorkItems().isEmpty();
+	}
+
+	public boolean hasUncrackedPasswords() {
+		return this.unassignedWorkItems.stream().filter((item) -> !item.isCracked()).findFirst().isPresent();
+	}
+
+	public WorkItem findWorkItemForPasswordId(int id) {
+		return this.getAssignedWorkItems().stream()
+			.filter((item) -> item.getPasswordEntry().getId() == id)
+			.findFirst()
+			.get();
 	}
 }

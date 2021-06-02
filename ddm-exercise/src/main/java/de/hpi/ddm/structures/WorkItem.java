@@ -1,14 +1,19 @@
 package de.hpi.ddm.structures;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
+import java.util.LinkedList;
+import java.util.List;
 
+import akka.actor.ActorRef;
+import lombok.Data;
 @Data
 public class WorkItem {
-    private boolean working;
-    private String[] inputLine;
+    private boolean cracked;
+    private PasswordEntry passwordEntry;
+    private List<ActorRef> workersCracking;
 
-    public WorkItem(String[] input) {
-        this.inputLine = input;
+    public WorkItem(PasswordEntry entry) {
+        this.cracked = false;
+        this.passwordEntry = entry;
+        this.workersCracking = new LinkedList<>();
     }
 }
