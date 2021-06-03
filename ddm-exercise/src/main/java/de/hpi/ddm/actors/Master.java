@@ -112,7 +112,6 @@ public class Master extends AbstractLoggingActor {
 		this.state.getWorkers().add(this.sender());
 		this.log().info("Registered {}", this.sender());
 
-		// TODO: do we really need to send a welcome message? Maybe remove it altogether?
 		this.state.getLargeMessageProxy().tell(
 			new LargeMessageProxy.LargeMessage<>(new Worker.WelcomeMessage(this.state.getWelcomeData()), this.sender()
 		), this.self());
@@ -127,6 +126,10 @@ public class Master extends AbstractLoggingActor {
 		if (message.getLines().isEmpty()) {
 			this.log().info("No more work left in the password file.");
 			this.state.setAnyWorkLeft(false);
+			if (!this.state.hasUncrackedPasswords() && !this.state.hasUnassignedWorkItems()) {  // TODO: is it possible that one predicate here will be true and the other false?
+				this.log().info("No unassigned work items left, terminating....");
+				terminate();
+			}
 			return;
 		}
 
@@ -141,12 +144,11 @@ public class Master extends AbstractLoggingActor {
 			// Work out number of hints to crack before cracking the password, this needs to be done only once since
 			// all password entries follow the same pattern (i.e., they feature the same password length, possible chars
 			// (a.k.a. alphabet chars a.k.a. passwordChars), number of hints, etc.).
-			// TODO: implement the algorithm from the "Cracking estimation difficulty.pdf" file
 			PasswordEntry passwordEntry = this.state.getWorkItems().first().getPasswordEntry();
 			this.state.setNumHintsToCrack(
 				getNumHintsToCrack(
 					passwordEntry.getPasswordChars().length(),
-					 passwordEntry.getHintHashes().size(),
+					passwordEntry.getHintHashes().size(),
 					passwordEntry.getPasswordLength()
 				)
 			);
@@ -158,12 +160,12 @@ public class Master extends AbstractLoggingActor {
 	protected void handle(GetNextWorkItemMessage message) {
 		// Assign some work to workers. Note that the processing of the global task might have already started.
 		if (!this.state.hasUnassignedWorkItems() && this.state.isAnyWorkLeft()) {
-			// no unassigned work but there's some work left
+			// No unassigned work left, but there's still some work left on the reader's side.
 			if (!this.state.isAlreadyAwaitingReadMessage()) {
 				this.state.getReader().tell(new Reader.ReadMessage(), this.self());
 				this.state.setAlreadyAwaitingReadMessage(true);
 			}
-			// Send a message, that currently there is no work and the worker should try again later.
+			// Send a message that currently there is no work and the worker should try again later.
 			this.sender().tell(new Worker.WorkMessage(), this.self());
 			return;
 		}
@@ -199,7 +201,6 @@ public class Master extends AbstractLoggingActor {
 			new Worker.WorkMessage(nextWorkItem.getPasswordEntry(), this.state.getNumHintsToCrack(), shouldRandomize),
 			this.sender()
 		), this.self());
-
 	}
 
 	private void handle(CrackedPasswordMessage crackedPasswordMessage) {
@@ -228,10 +229,18 @@ public class Master extends AbstractLoggingActor {
 
 		// Everything done.
 		if (!this.state.hasUncrackedPasswords()) {
-			this.log().info("All passwords cracked. Terminating.");
-			terminate();
+			if (!this.state.isAnyWorkLeft()) {
+				this.log().info("All passwords cracked. Terminating.");
+				terminate();
+			} else {
+				// Request the next batch of lines from the reader if no one has already done so.
+				if (!this.state.isAlreadyAwaitingReadMessage()) {
+					this.state.getReader().tell(new Reader.ReadMessage(), this.getSelf());
+					this.state.setAlreadyAwaitingReadMessage(true);
+				}
+			}
 		} else {
-			this.log().info("{} passwords left to crack.", this.state.getNumberOfUncrackedPasswords());
+			this.log().info("{} passwords left to crack in batch.", this.state.getNumberOfUncrackedPasswords());
 		}
 	}
 

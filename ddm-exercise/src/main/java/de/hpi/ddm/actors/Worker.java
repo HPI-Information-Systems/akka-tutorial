@@ -62,6 +62,7 @@ public class Worker extends AbstractLoggingActor {
 
 	@Data @NoArgsConstructor
 	public static class StopCrackMessage implements Serializable {
+		private static final long serialVersionUID = 511235140833625586L;
 	}
 
 	/**
@@ -158,6 +159,34 @@ public class Worker extends AbstractLoggingActor {
 
 		// This worker has nothing to do for now, send request.
 		this.sender().tell(new Master.GetNextWorkItemMessage(), this.self());
+	}
+
+	private void handle(WorkMessage workMessage) {
+		if (workMessage.getPasswordEntry() == null) {
+			this.log().debug("Got work message without content, trying again later...");
+			// Currently no work, ask master again later.
+			this.getContext().system().scheduler().scheduleOnce(
+					Duration.ofMillis(500),
+					this.sender(),
+					new Master.GetNextWorkItemMessage(),
+					this.getContext().dispatcher(),
+					this.self()
+			);
+			return;
+		}
+
+		this.shouldStopCracking = false;
+
+		// Start cracking process (and do not block the worker).
+		final WorkMessage workMessageCopy = workMessage;
+		final ActorRef sender = this.sender();
+		final LoggingAdapter logger = this.log();
+		final ActorRef selfRef = this.self();
+		this.getContext().getSystem().scheduler().scheduleOnce(
+				Duration.ZERO,
+				() -> this.crack(workMessageCopy, sender, logger, selfRef),
+				this.getContext().dispatcher()
+		);
 	}
 
 	private boolean crack(WorkMessage workMessage, ActorRef sender, LoggingAdapter logger, ActorRef self) {
@@ -284,34 +313,6 @@ public class Worker extends AbstractLoggingActor {
 		}
 		logger.error("The password with hash {} could not be cracked.", passwordEntry.getPasswordHash());
 		return false;
-	}
-
-	private void handle(WorkMessage workMessage) throws Exception {
-		if (workMessage.getPasswordEntry() == null) {
-			this.log().debug("Got work message without content, trying again later...");
-			// Currently no work, ask master again later.
-			this.getContext().system().scheduler().scheduleOnce(
-				Duration.ofMillis(500),
-				this.sender(),
-				new Master.GetNextWorkItemMessage(),
-				this.getContext().dispatcher(),
-				this.self()
-			);
-			return;
-		}
-
-		this.shouldStopCracking = false;
-
-		// Start cracking process (and do not block the worker).
-		final WorkMessage workMessageCopy = workMessage;
-		final ActorRef sender = this.sender();
-		final LoggingAdapter logger = this.log();
-		final ActorRef selfRef = this.self();
-		this.getContext().getSystem().scheduler().scheduleOnce(
-			Duration.ZERO,
-			() -> this.crack(workMessageCopy, sender, logger, selfRef),
-			this.getContext().dispatcher()
-		);
 	}
 
 	private void handle(ThanksForCrackMessage message) {

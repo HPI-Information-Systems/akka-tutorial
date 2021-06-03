@@ -5,6 +5,7 @@ import java.util.List;
 
 import akka.actor.ActorRef;
 import lombok.Data;
+
 @Data
 public class WorkItem {
     private boolean cracked;
