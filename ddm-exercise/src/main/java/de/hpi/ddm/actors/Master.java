@@ -109,7 +109,7 @@ public class Master extends AbstractLoggingActor {
 
 	protected void handle(RegistrationMessage message) {
 		this.context().watch(this.sender());
-		this.state.getWorkers().add(this.sender());  // TODO: do we need `workers`? Maybe only use the sets with available and busy workers?
+		this.state.getWorkers().add(this.sender());
 		this.log().info("Registered {}", this.sender());
 
 		// TODO: do we really need to send a welcome message? Maybe remove it altogether?
@@ -125,17 +125,15 @@ public class Master extends AbstractLoggingActor {
 
 		// Stop fetching lines from the Reader once an empty BatchMessage was received; we have seen all data then.
 		if (message.getLines().isEmpty()) {
-			if (!this.state.getBusyWorkers().isEmpty()) {
-				this.log().info("No more work left.");
-				this.state.setAnyWorkLeft(false);
-			}
+			this.log().info("No more work left in the password file.");
+			this.state.setAnyWorkLeft(false);
 			return;
 		}
 
-		this.state.getUnassignedWorkItems().addAll(
+		this.state.getWorkItems().addAll(
 			message.getLines().stream()
 				.map(PasswordEntry::parseFromLine)
-				.map(WorkItem::new)
+				.map((passwordEntry) -> new WorkItem(passwordEntry))
 				.collect(Collectors.toList())
 		);
 
@@ -144,7 +142,7 @@ public class Master extends AbstractLoggingActor {
 			// all password entries follow the same pattern (i.e., they feature the same password length, possible chars
 			// (a.k.a. alphabet chars a.k.a. passwordChars), number of hints, etc.).
 			// TODO: implement the algorithm from the "Cracking estimation difficulty.pdf" file
-			PasswordEntry passwordEntry = this.state.getUnassignedWorkItems().peek().getPasswordEntry();
+			PasswordEntry passwordEntry = this.state.getWorkItems().first().getPasswordEntry();
 			this.state.setNumHintsToCrack(
 				getNumHintsToCrack(
 					passwordEntry.getPasswordChars().length(),
@@ -159,47 +157,82 @@ public class Master extends AbstractLoggingActor {
 
 	protected void handle(GetNextWorkItemMessage message) {
 		// Assign some work to workers. Note that the processing of the global task might have already started.
-		if (this.state.hasUnassignedWorkItems()) {
-			WorkItem nextWorkItem = this.state.getUnassignedWorkItems().remove();
-
-			// Give the new worker some work.
-			this.state.getBusyWorkers().add(this.sender());
-			this.state.getLargeMessageProxy().tell(new LargeMessageProxy.LargeMessage<>(
-				new Worker.WorkMessage(nextWorkItem.getPasswordEntry(), this.state.getNumHintsToCrack()), this.sender()
-			), this.self());
-
-			this.state.getAssignedWorkItems().add(nextWorkItem);
-		} else {
-			if (this.state.isAnyWorkLeft()) {
-				// no unassigned work but there's some work left
-				if (!this.state.isAlreadyAwaitingReadMessage()) {
-					this.state.getReader().tell(new Reader.ReadMessage(), this.self());
-					this.state.setAlreadyAwaitingReadMessage(true);
-				}
-				// Send a message, that currently there is no work and the worker should try again later.
-				this.sender().tell(new Worker.WorkMessage(), this.self());
-			} else {
-				this.state.getBusyWorkers().remove(sender());
-				this.log().info("No work left, removed worker {}, busy workers left = {}", this.sender(), this.state.getBusyWorkers().size());
-
-				if (this.state.getBusyWorkers().isEmpty()) {
-					this.log().info("Neither any work nor busy workers left, terminating...");
-					terminate();
-				}
+		if (!this.state.hasUnassignedWorkItems() && this.state.isAnyWorkLeft()) {
+			// no unassigned work but there's some work left
+			if (!this.state.isAlreadyAwaitingReadMessage()) {
+				this.state.getReader().tell(new Reader.ReadMessage(), this.self());
+				this.state.setAlreadyAwaitingReadMessage(true);
 			}
+			// Send a message, that currently there is no work and the worker should try again later.
+			this.sender().tell(new Worker.WorkMessage(), this.self());
+			return;
 		}
+
+		final WorkItem nextWorkItem = this.state.nextWorkItem();
+
+		if (nextWorkItem == null) {
+			// Send a message, that currently there is no work and the worker should try again later.
+			this.sender().tell(new Worker.WorkMessage(), this.self());
+			return;
+		}
+
+		final boolean shouldRandomize = !nextWorkItem.getWorkersCracking().isEmpty();
+		this.state.addCrackingWorker(nextWorkItem, this.sender());
+
+		if (shouldRandomize) {
+			this.log().info(
+				"Straggler Avoidance: Sending already in progress password {} of {} to {}.",
+				nextWorkItem.getPasswordEntry().getId(),
+				nextWorkItem.getPasswordEntry().getName(),
+				this.sender().toString()
+			);
+		} else {
+			this.log().info(
+				"Sending password {} of {} to {}.",
+				nextWorkItem.getPasswordEntry().getId(),
+				nextWorkItem.getPasswordEntry().getName(),
+				this.sender().toString()
+			);
+		}
+	
+		this.state.getLargeMessageProxy().tell(new LargeMessageProxy.LargeMessage<>(
+			new Worker.WorkMessage(nextWorkItem.getPasswordEntry(), this.state.getNumHintsToCrack(), shouldRandomize),
+			this.sender()
+		), this.self());
+
 	}
 
 	private void handle(CrackedPasswordMessage crackedPasswordMessage) {
 		// Send partial results to the collector.
 		final String result = crackedPasswordMessage.getId() + " " + crackedPasswordMessage.getName() + " " + crackedPasswordMessage.getCrackedPassword();
 
-		this.log().info("Received result {}, sending result to collector...", result);
+		this.log().info(
+			"Received result {} from {}, sending result to collector...",
+			result,
+			this.sender()
+		);
 		this.state.getCollector().tell(new Collector.CollectMessage(result), this.self());
-		this.state.getBusyWorkers().remove(this.sender());
 
-		WorkItem crackedItem = this.state.findWorkItemForPasswordId(crackedPasswordMessage.getId());
-		crackedItem.setCracked(true);
+		try {
+			WorkItem crackedItem = this.state.removeCracked(crackedPasswordMessage.getId(), this.sender());
+			for (ActorRef workingActor : crackedItem.getWorkersCracking()) {
+				this.log().info("Telling {} to stop current cracking.", workingActor);
+				workingActor.tell(new Worker.StopCrackMessage(), this.self());
+			}
+		} catch (NoSuchElementException ex) {
+			this.log().info("Password {} was already cracked.", crackedPasswordMessage.getId());
+		}
+
+		// We are very polite.
+		this.sender().tell(new Worker.ThanksForCrackMessage(), this.self());
+
+		// Everything done.
+		if (!this.state.hasUncrackedPasswords()) {
+			this.log().info("All passwords cracked. Terminating.");
+			terminate();
+		} else {
+			this.log().info("{} passwords left to crack.", this.state.getNumberOfUncrackedPasswords());
+		}
 	}
 
 	protected void handle(Terminated message) {

@@ -10,17 +10,19 @@ import java.util.stream.Collectors;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
+import akka.actor.Cancellable;
 import akka.actor.PoisonPill;
 import akka.actor.Props;
 import akka.cluster.Cluster;
 import akka.cluster.ClusterEvent.CurrentClusterState;
 import akka.cluster.ClusterEvent.MemberRemoved;
 import akka.cluster.ClusterEvent.MemberUp;
+import akka.event.LoggingAdapter;
 import akka.cluster.Member;
 import akka.cluster.MemberStatus;
 import de.hpi.ddm.structures.BloomFilter;
-import de.hpi.ddm.systems.MasterSystem;
 import de.hpi.ddm.structures.PasswordEntry;
+import de.hpi.ddm.systems.MasterSystem;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -52,6 +54,16 @@ public class Worker extends AbstractLoggingActor {
 		private BloomFilter welcomeData;
 	}
 
+	// Well... Chewbakka cannot keep the hands off it...
+	@Data @NoArgsConstructor
+	public static class ThanksForCrackMessage implements Serializable {
+		private static final long serialVersionUID = 4576144675273774875L;
+	}
+
+	@Data @NoArgsConstructor
+	public static class StopCrackMessage implements Serializable {
+	}
+
 	/**
 	 * A message with the password entry to crack a password for and the number of hints to crack before
 	 * cracking the password.
@@ -62,6 +74,7 @@ public class Worker extends AbstractLoggingActor {
 		// If null, currently no work available.
 		private PasswordEntry passwordEntry;
 		private int numHintsToCrack;
+		private boolean randomized;
 	}
 
 	/////////////////
@@ -72,6 +85,8 @@ public class Worker extends AbstractLoggingActor {
 	private final Cluster cluster;
 	private final ActorRef largeMessageProxy;
 	private long registrationTime;
+
+	private boolean shouldStopCracking = false;
 
 	/////////////////////
 	// Actor Lifecycle //
@@ -101,6 +116,8 @@ public class Worker extends AbstractLoggingActor {
 			.match(MemberRemoved.class, this::handle)
 			.match(WelcomeMessage.class, this::handle)
 			.match(WorkMessage.class, this::handle)
+			.match(ThanksForCrackMessage.class, this::handle)
+			.match(StopCrackMessage.class, this::handle)
 			.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 			.build();
 	}
@@ -129,8 +146,10 @@ public class Worker extends AbstractLoggingActor {
 	}
 
 	private void handle(MemberRemoved message) {
-		if (this.masterSystem.equals(message.member()))
+		if (this.masterSystem.equals(message.member())) {
+			this.stopCracking();
 			this.self().tell(PoisonPill.getInstance(), ActorRef.noSender());
+		}
 	}
 
 	private void handle(WelcomeMessage message) {
@@ -141,26 +160,13 @@ public class Worker extends AbstractLoggingActor {
 		this.sender().tell(new Master.GetNextWorkItemMessage(), this.self());
 	}
 
-	private void handle(WorkMessage workMessage) throws Exception {
-		if (workMessage.getPasswordEntry() == null) {
-			this.log().debug("Got work message without content, trying again later...");
-			// Currently no work, ask master again later.
-			this.getContext().system().scheduler().scheduleOnce(
-				Duration.ofMillis(500),
-				this.sender(),
-				new Master.GetNextWorkItemMessage(),
-				this.getContext().dispatcher(),
-				this.self()
-			);
-			return;
-		}
-
+	private boolean crack(WorkMessage workMessage, ActorRef sender, LoggingAdapter logger, ActorRef self) {
 		PasswordEntry passwordEntry = workMessage.getPasswordEntry();
-		this.log().warning("Cracking password entry with id = {} and name = {}...", passwordEntry.getId(), passwordEntry.getName());
+		logger.warning("Cracking password entry with id = {} and name = {}...", passwordEntry.getId(), passwordEntry.getName());
 
 		// Crack hints, if any.
 		int crackedHintsCounter = 0;
-		List<String> hintHashes = new ArrayList<>(workMessage.getPasswordEntry().getHintHashes());
+		List<String> hintHashes = new ArrayList<>(passwordEntry.getHintHashes());
 		List<Character> remainingUniquePasswordCharsList = passwordEntry.getPasswordChars().chars().mapToObj(c -> (char) c).collect(Collectors.toList());
 		Iterator<Character> it = remainingUniquePasswordCharsList.iterator();  // the chars from this string will be excluded as we crack hints
 
@@ -169,9 +175,9 @@ public class Worker extends AbstractLoggingActor {
 
 			// Exclude a char, generate permutations of the remaining ones, and compare the hashes of the permutations with those
 			// of the remaining uncracked hints.
-			this.log().debug("Excluding {}...", nextChar);
+			logger.debug("Excluding {}...", nextChar);
 			String charsForPerms = passwordEntry.getPasswordChars().replaceAll(String.valueOf(nextChar), "");
-			this.log().debug("charsForPerms = " + charsForPerms);
+			logger.debug("charsForPerms = " + charsForPerms);
 			String permHash = permuteAndCompare(charsForPerms.toCharArray(), passwordEntry.getPasswordChars().length() - 1, hintHashes);
 			if (permHash == null) {
 				continue;
@@ -179,12 +185,12 @@ public class Worker extends AbstractLoggingActor {
 			crackedHintsCounter++;
 			it.remove();
 			hintHashes.remove(permHash);
-			this.log().debug("Cracked hint, remaining unique password chars = " + remainingUniquePasswordCharsList);
+			logger.debug("Cracked hint, remaining unique password chars = " + remainingUniquePasswordCharsList);
 		}
 
 		String remainingUniquePasswordChars = remainingUniquePasswordCharsList.stream().map(String::valueOf).collect(Collectors.joining(""));
-		this.log().debug("Cracked {} hints, remaining unique password chars = {}", crackedHintsCounter, remainingUniquePasswordChars);
-		this.log().debug("Cracking password...");
+		logger.debug("Cracked {} hints, remaining unique password chars = {}", crackedHintsCounter, remainingUniquePasswordChars);
+		logger.debug("Cracking password...");
 
 		// Derive all combinations of possible unique password chars from the remaining unique password chars.
 		// E.g., if the actual number of unique password chars = 2, then for the `remainingUniquePasswordChars` = "ABCD",
@@ -200,11 +206,11 @@ public class Worker extends AbstractLoggingActor {
 		// The actual number of unique password characters (e.g., 2).
 		int numUniquePasswordChars = passwordEntry.getPasswordChars().length() - passwordEntry.getHintHashes().size();
 
-		Queue<String> uniquePasswordCharCombs = new LinkedList<>();
+		LinkedList<String> uniquePasswordCharCombs = new LinkedList<>();
 		for (char c : remainingUniquePasswordChars.toCharArray()) {
 			uniquePasswordCharCombs.add(String.valueOf(c));
 		}
-		Queue<String> helperQueue = new LinkedList<>();
+		LinkedList<String> helperQueue = new LinkedList<>();
 
 		// Until we have combinations of the required length, take each stored unique comb of chars from the queue
 		// and append each unique char to it, put back in the queue, repeat.
@@ -223,18 +229,26 @@ public class Worker extends AbstractLoggingActor {
 			}
 			// Just swap the links rather then copying values from queue to queue and clearing the helper
 			// queue / creating a new helper queue.
-			Queue<String> tmp = uniquePasswordCharCombs;
+			LinkedList<String> tmp = uniquePasswordCharCombs;
 			uniquePasswordCharCombs = helperQueue;
 			helperQueue = tmp;
 		}
-		this.log().debug("Generated {} combinations", uniquePasswordCharCombs.size());
+		logger.debug("Generated {} combinations", uniquePasswordCharCombs.size());
+
+		if (workMessage.isRandomized()) {
+			logger.debug("Will shuffle the combinations.");
+			Collections.shuffle(uniquePasswordCharCombs);
+		}
 
 		// Iterate over the resulting unique combinations and generate possible passwords
 		for (String uniquePasswordCharComb : uniquePasswordCharCombs) {
-			this.log().debug("Generating and checking passwords for combinations of {}.", uniquePasswordCharComb);
+			if (this.shouldStopCracking) {
+				return false;
+			}
+			logger.debug("Generating and checking passwords for combinations of {}.", uniquePasswordCharComb);
 			// The algorithm below is similar to that used above for working out the possible combinations of unique
 			// password chars, but this time we append each char to the already generated sequences.
-			Queue<String> possiblePasswords = new LinkedList<>();
+			LinkedList<String> possiblePasswords = new LinkedList<>();
 			for (char c : uniquePasswordCharComb.toCharArray()) {
 				possiblePasswords.add(String.valueOf(c));
 			}
@@ -247,29 +261,72 @@ public class Worker extends AbstractLoggingActor {
 						helperQueue.add(comb + c);
 					}
 				}
-				Queue<String> tmp = possiblePasswords;
+				LinkedList<String> tmp = possiblePasswords;
 				possiblePasswords = helperQueue;
 				helperQueue = tmp;
 			}
-			this.log().debug("Generated {} possible passwords.", possiblePasswords.size());
+			logger.debug("Generated {} possible passwords.", possiblePasswords.size());
 
 			for (String possiblePassword : possiblePasswords) {
+				if (this.shouldStopCracking) {
+					return false;
+				}
 				if (hash(possiblePassword).equals(passwordEntry.getPasswordHash())) {
 					// Send the cracked password to the master.
-					this.log().warning("Cracked password for id = {} and name = {}, sending result to master...", passwordEntry.getId(), passwordEntry.getName());
-					this.getSender().tell(
+					logger.warning("Cracked password for id = {} and name = {}, sending result to master...", passwordEntry.getId(), passwordEntry.getName());
+					sender.tell(
 						new Master.CrackedPasswordMessage(passwordEntry.getId(), passwordEntry.getName(), possiblePassword),
-						this.getSelf()
+						self
 					);
-					this.getSender().tell(
-						new Master.GetNextWorkItemMessage(),
-						this.getSelf()
-					);
-					return;
+					return true;
 				}
 			}
 		}
-		throw new Exception("The password with hash " + passwordEntry.getPasswordHash() + " could not be cracked.");
+		logger.error("The password with hash {} could not be cracked.", passwordEntry.getPasswordHash());
+		return false;
+	}
+
+	private void handle(WorkMessage workMessage) throws Exception {
+		if (workMessage.getPasswordEntry() == null) {
+			this.log().debug("Got work message without content, trying again later...");
+			// Currently no work, ask master again later.
+			this.getContext().system().scheduler().scheduleOnce(
+				Duration.ofMillis(500),
+				this.sender(),
+				new Master.GetNextWorkItemMessage(),
+				this.getContext().dispatcher(),
+				this.self()
+			);
+			return;
+		}
+
+		this.shouldStopCracking = false;
+
+		// Start cracking process (and do not block the worker).
+		final WorkMessage workMessageCopy = workMessage;
+		final ActorRef sender = this.sender();
+		final LoggingAdapter logger = this.log();
+		final ActorRef selfRef = this.self();
+		this.getContext().getSystem().scheduler().scheduleOnce(
+			Duration.ZERO,
+			() -> this.crack(workMessageCopy, sender, logger, selfRef),
+			this.getContext().dispatcher()
+		);
+	}
+
+	private void handle(ThanksForCrackMessage message) {
+		// We need more crack.
+		this.sender().tell(new Master.GetNextWorkItemMessage(), this.self());
+	}
+
+	private void handle(StopCrackMessage message) {
+		this.stopCracking();
+	}
+
+	private void stopCracking() {
+		this.log().info("Stopping crack task.");
+		this.shouldStopCracking = true;
+		this.sender().tell(new Master.GetNextWorkItemMessage(), this.self());
 	}
 
 	private String hash(String characters) {
