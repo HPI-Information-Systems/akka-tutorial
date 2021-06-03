@@ -15,34 +15,36 @@ import de.hpi.ddm.systems.MasterSystem;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.apache.commons.lang3.ArrayUtils;
 
 import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class Worker extends AbstractLoggingActor {
 
-	////////////////////////
-	// Actor Construction //
-	////////////////////////
+    ////////////////////////
+    // Actor Construction //
+    ////////////////////////
 
-	public static final String DEFAULT_NAME = "worker";
+    public static final String DEFAULT_NAME = "worker";
 
-	public static Props props() {
-		return Props.create(Worker.class);
-	}
+    public static Props props() {
+        return Props.create(Worker.class);
+    }
 
-	public Worker() {
-		this.cluster = Cluster.get(this.context().system());
-		this.largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
-	}
+    public Worker() {
+        this.cluster = Cluster.get(this.context().system());
+        this.largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
+    }
 
-	////////////////////
-	// Actor Messages //
-	////////////////////
+    ////////////////////
+    // Actor Messages //
+    ////////////////////
 
     @Data
     @NoArgsConstructor
@@ -186,25 +188,14 @@ public class Worker extends AbstractLoggingActor {
             String[] hintHashes = new String[currentLine.length - 5];
             System.arraycopy(currentLine, 5, hintHashes, 0, hintHashes.length);
 
-            char[] remainingAlphabetChars = new char[alphabet.length - currentCrackedHints.size()];
-            int index = 0;
-            loop:
-            for (char hint : currentCrackedHints) {
-                for (char alphabetChar : alphabet) {
-                    if (hint != alphabetChar) {
-                        remainingAlphabetChars[index++] = alphabetChar;
-                        if (index == remainingAlphabetChars.length) break loop;
-                    }
-                }
-            }
-            if(heapPermutation(remainingAlphabetChars, length, length, permutation ->{
-                if (hash(permutation).equals(passwordHash)) {
-                    System.out.println("CRACKED: " + name + " " + permutation);
-                    master.tell(new Master.ResultsMessage(currentLine, permutation), this.self());
-                    return true;
-                }
-                return false;
-            })) return;
+            List<Character> alphabetList = new ArrayList<>(Arrays.asList(ArrayUtils.toObject(alphabet)));
+            alphabetList.removeAll(currentCrackedHints);
+
+            char[] remainingAlphabetChars = ArrayUtils.toPrimitive(alphabetList.toArray(new Character[0]));
+
+            char[] result = heapPermutation(remainingAlphabetChars, length, passwordHash);
+            System.out.println("CRACKED: " + name + " " + new String(result));
+            master.tell(new Master.ResultsMessage(currentLine, new String(result)), this.self());
         }
     }
 
@@ -215,13 +206,10 @@ public class Worker extends AbstractLoggingActor {
             System.arraycopy(message.alphabet, 0, alphabetWithoutOne, 0, i);
             System.arraycopy(message.alphabet, i + 1, alphabetWithoutOne, i, alphabetWithoutOne.length - i);
 
-            if(heapPermutation(alphabetWithoutOne, alphabetWithoutOne.length, alphabetWithoutOne.length, s -> {
-                if (hash(s).equals(message.hashedHint)) {
-                    message.worker.tell(new CrackHintResultMessage(missingCharacter), this.self());
-                    return true;
-                }
-                return false;
-            })) return;
+            char[] result = heapPermutation(alphabetWithoutOne, alphabetWithoutOne.length, message.hashedHint);
+            if(result.length > 0) {
+                message.worker.tell(new CrackHintResultMessage(missingCharacter), this.self());
+            }
         }
     }
 
@@ -240,20 +228,21 @@ public class Worker extends AbstractLoggingActor {
         }
     }
 
-    interface PermutationCallback{
+    interface PermutationCallback {
         boolean check(String s);
     }
 
     // Generating all permutations of an array using Heap's Algorithm
     // https://en.wikipedia.org/wiki/Heap's_algorithm
     // https://www.geeksforgeeks.org/heaps-algorithm-for-generating-permutations/
-    private boolean heapPermutation(char[] a, int size, int n, PermutationCallback l) {
+    private char[] heapPermutation(char[] a, int size, String hash) {
         // If size is 1, store the obtained permutation
         if (size == 1)
-            if(l.check(new String(a))) return true;
+            if (hash(new String(a)).equals(hash)) return a;
 
         for (int i = 0; i < size; i++) {
-            if(heapPermutation(a, size - 1, n, l)) return true;
+            char[] result = heapPermutation(a, size - 1, hash);
+            if (result.length > 0) return result;
 
             // If size is odd, swap first and last element
             if (size % 2 == 1) {
@@ -270,6 +259,6 @@ public class Worker extends AbstractLoggingActor {
             }
         }
 
-        return false;
+        return new char[0];
     }
 }
