@@ -24,6 +24,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 public class Worker extends AbstractLoggingActor {
 
@@ -61,7 +62,7 @@ public class Worker extends AbstractLoggingActor {
         private static final long serialVersionUID = 8797218033667079391L;
         private String id;
         private String[] hashedHints;
-        private char[] alphabet;
+        private Map<Character, List<String>> permutationsMap;
     }
 
     @Data
@@ -166,24 +167,22 @@ public class Worker extends AbstractLoggingActor {
 
     private void handle(CrackHintsMessage message) {
         List<String> remainingHashes = new ArrayList<>(Arrays.asList(message.hashedHints));
-        for (int i = 0; i < message.alphabet.length; i++) {
-            char missingCharacter = message.alphabet[i];
-            char[] alphabetWithoutOne = new char[message.alphabet.length - 1];
-            System.arraycopy(message.alphabet, 0, alphabetWithoutOne, 0, i);
-            System.arraycopy(message.alphabet, i + 1, alphabetWithoutOne, i, alphabetWithoutOne.length - i);
 
-            if (heapPermutation(alphabetWithoutOne, alphabetWithoutOne.length, permutation -> {
-                if(remainingHashes.isEmpty()){
-                    return true;
-                }
-                for(String hash: remainingHashes) {
-                    if (hash(permutation).equals(hash)) {
-                        remainingHashes.remove(hash);
-                        this.sender().tell(new Master.CrackHintResultMessage(message.id, missingCharacter), this.self());
+        for (Character missingCharacter : message.permutationsMap.keySet()) {
+            boolean foundHintWithoutCharacter = false;
+            for(String permutation : message.permutationsMap.get(missingCharacter)) {
+                if(!foundHintWithoutCharacter) {
+                    for (int i = 0; i < remainingHashes.size(); i++) {
+                        if (hash(permutation).equals(remainingHashes.get(i))) {
+                            System.out.println(permutation);
+                            this.sender().tell(new Master.CrackHintResultMessage(message.id, missingCharacter), this.self());
+                            remainingHashes.remove(i);
+                            foundHintWithoutCharacter = true;
+                            break;
+                        }
                     }
                 }
-                return false;
-            })) return;
+            }
         }
     }
 

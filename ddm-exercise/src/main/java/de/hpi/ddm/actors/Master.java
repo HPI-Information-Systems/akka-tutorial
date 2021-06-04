@@ -8,9 +8,10 @@ import lombok.NoArgsConstructor;
 import org.apache.commons.lang3.ArrayUtils;
 
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.io.UnsupportedEncodingException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -152,17 +153,34 @@ public class Master extends AbstractLoggingActor {
             return;
         }
 
+        Map<Character, List<String>> permutationsMap = new HashMap<>();
+
+        String[] firstLine = message.getLines().get(0);
+        char[] alphabet = firstLine[2].toCharArray();
+        int passwordLength = Integer.parseInt(firstLine[3]);
+        for (int i = 0; i < alphabet.length; i++) {
+            char missingCharacter = alphabet[i];
+            char[] alphabetWithoutOne = new char[alphabet.length - 1];
+            System.arraycopy(alphabet, 0, alphabetWithoutOne, 0, i);
+            System.arraycopy(alphabet, i + 1, alphabetWithoutOne, i, alphabetWithoutOne.length - i);
+
+            List<String> permutations = new ArrayList();
+            heapPermutation(alphabetWithoutOne, passwordLength, permutations);
+
+            permutationsMap.put(missingCharacter, permutations);
+        }
+
+        log("processing input lines");
         // TODO: Process the lines with the help of the worker actors
         for (String[] line : message.getLines()) {
             lines.put(line[0], line);
 
-            char[] alphabet = line[2].toCharArray();
             String[] hintHashes = new String[line.length - 5];
             System.arraycopy(line, 5, hintHashes, 0, hintHashes.length);
 
             pendingTasks.add(worker -> {
                 log("start hint cracking for "+line[0]);
-                worker.tell(new Worker.CrackHintsMessage(line[0], hintHashes, alphabet), this.self());
+                worker.tell(new Worker.CrackHintsMessage(line[0], hintHashes, permutationsMap), this.self());
             });
         }
 
@@ -180,7 +198,6 @@ public class Master extends AbstractLoggingActor {
 
         if (solvedHints.size() == lines.get(message.id).length - 5) {
             availableWorkers.add(this.sender());
-            doNextTask();
             pendingTasks.add(worker -> {
                 List<Character> alphabetList = new ArrayList<>(Arrays.asList(ArrayUtils.toObject(lines.get(message.id)[2].toCharArray())));
                 alphabetList.removeAll(solvedHints.get(message.id));
@@ -256,5 +273,47 @@ public class Master extends AbstractLoggingActor {
 
     private void log(String s){
         System.out.println(s);
+    }
+
+    private String hash(String characters) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashedBytes = digest.digest(String.valueOf(characters).getBytes("UTF-8"));
+
+            StringBuffer stringBuffer = new StringBuffer();
+            for (int i = 0; i < hashedBytes.length; i++) {
+                stringBuffer.append(Integer.toString((hashedBytes[i] & 0xff) + 0x100, 16).substring(1));
+            }
+            return stringBuffer.toString();
+        } catch (NoSuchAlgorithmException | UnsupportedEncodingException e) {
+            throw new RuntimeException(e.getMessage());
+        }
+    }
+
+    // Generating all permutations of an array using Heap's Algorithm
+    // https://en.wikipedia.org/wiki/Heap's_algorithm
+    // https://www.geeksforgeeks.org/heaps-algorithm-for-generating-permutations/
+    private void heapPermutation(char[] a, int size, List<String> l) {
+        // If size is 1, store the obtained permutation
+        if (size == 1)
+            l.add(new String(a));
+
+        for (int i = 0; i < size; i++) {
+            heapPermutation(a, size - 1, l);
+
+            // If size is odd, swap first and last element
+            if (size % 2 == 1) {
+                char temp = a[0];
+                a[0] = a[size - 1];
+                a[size - 1] = temp;
+            }
+
+            // If size is even, swap i-th and last element
+            else {
+                char temp = a[i];
+                a[i] = a[size - 1];
+                a[size - 1] = temp;
+            }
+        }
     }
 }
