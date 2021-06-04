@@ -155,7 +155,7 @@ public class Worker extends AbstractLoggingActor {
 
 	private void handle(WelcomeMessage message) {
 		final long transmissionTime = System.currentTimeMillis() - this.registrationTime;
-		this.log().warning("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
+		this.log().info("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
 
 		// This worker has nothing to do for now, send request.
 		this.sender().tell(new Master.GetNextWorkItemMessage(), this.self());
@@ -191,7 +191,7 @@ public class Worker extends AbstractLoggingActor {
 
 	private boolean crack(WorkMessage workMessage, ActorRef sender, LoggingAdapter logger, ActorRef self) {
 		PasswordEntry passwordEntry = workMessage.getPasswordEntry();
-		logger.warning("Cracking password entry with id = {} and name = {}...", passwordEntry.getId(), passwordEntry.getName());
+		logger.info("Cracking password entry with id = {} and name = {}...", passwordEntry.getId(), passwordEntry.getName());
 
 		// Crack hints, if any.
 		int crackedHintsCounter = 0;
@@ -302,7 +302,7 @@ public class Worker extends AbstractLoggingActor {
 				}
 				if (hash(possiblePassword).equals(passwordEntry.getPasswordHash())) {
 					// Send the cracked password to the master.
-					logger.warning("Cracked password for id = {} and name = {}, sending result to master...", passwordEntry.getId(), passwordEntry.getName());
+					logger.info("Cracked password for id = {} and name = {}, sending result to master...", passwordEntry.getId(), passwordEntry.getName());
 					sender.tell(
 						new Master.CrackedPasswordMessage(passwordEntry.getId(), passwordEntry.getName(), possiblePassword),
 						self
