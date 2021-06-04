@@ -161,7 +161,7 @@ public class Master extends AbstractLoggingActor {
             System.arraycopy(line, 5, hintHashes, 0, hintHashes.length);
 
             pendingTasks.add(worker -> {
-                this.log().info("start hint cracking for {}", line[0]);
+                log("start hint cracking for "+line[0]);
                 worker.tell(new Worker.CrackHintsMessage(line[0], hintHashes, alphabet), this.self());
             });
         }
@@ -172,7 +172,7 @@ public class Master extends AbstractLoggingActor {
     }
 
     protected void handle(CrackHintResultMessage message) {
-        this.log().info("received hint crack result for {}", message.id);
+        log("received hint crack result for " + message.id);
 
         List<Character> l = solvedHints.getOrDefault(message.id, new ArrayList<>());
         l.add(message.missingCharacter);
@@ -186,7 +186,7 @@ public class Master extends AbstractLoggingActor {
                 alphabetList.removeAll(solvedHints.get(message.id));
                 char[] remainingAlphabetChars = ArrayUtils.toPrimitive(alphabetList.toArray(new Character[0]));
 
-                this.log().info("starting to crack password of {}", message.id);
+                log("starting to crack password of "+ message.id);
                 worker.tell(new Worker.CrackPasswordMessage(message.id, lines.get(message.id)[4], remainingAlphabetChars, Integer.parseInt(lines.get(message.id)[3])), this.self());
             });
         }
@@ -203,13 +203,13 @@ public class Master extends AbstractLoggingActor {
 
     protected void doNextTask() {
         if (readAll && pendingTasks.isEmpty()) {
-            this.log().info("no tasks remaining, exiting");
+            log("no tasks remaining, exiting");
             this.terminate();
             return;
         }
 
         while (!availableWorkers.isEmpty() && !pendingTasks.isEmpty()) {
-            this.log().info("{} available workers and {} pending tasks", availableWorkers.size(), pendingTasks.size());
+            log(availableWorkers.size() + " available workers and " + pendingTasks.size() + " pending tasks");
             WorkerTask t = pendingTasks.remove(0);
             ActorRef w = availableWorkers.remove(0);
             t.run(w);
@@ -252,5 +252,9 @@ public class Master extends AbstractLoggingActor {
         this.log().info("Unregistered {}", message.getActor());
 
         this.availableWorkers.remove(message.getActor());
+    }
+
+    private void log(String s){
+        System.out.println(s);
     }
 }

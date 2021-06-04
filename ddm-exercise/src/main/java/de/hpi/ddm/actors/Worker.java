@@ -173,11 +173,13 @@ public class Worker extends AbstractLoggingActor {
             System.arraycopy(message.alphabet, i + 1, alphabetWithoutOne, i, alphabetWithoutOne.length - i);
 
             if (heapPermutation(alphabetWithoutOne, alphabetWithoutOne.length, permutation -> {
+                if(remainingHashes.isEmpty()){
+                    return true;
+                }
                 for(String hash: remainingHashes) {
                     if (hash(permutation).equals(hash)) {
                         remainingHashes.remove(hash);
                         this.sender().tell(new Master.CrackHintResultMessage(message.id, missingCharacter), this.self());
-                        return true;
                     }
                 }
                 return false;
