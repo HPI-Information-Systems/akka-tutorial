@@ -10,7 +10,7 @@
             "request": "launch",
             "mainClass": "de.hpi.ddm.Main",
             "projectName": "ddm-exercise",
-            "args": "master -wms 255"
+            "args": "master -wms 1 -w 1"
         }
     ]
 }
