@@ -173,14 +173,14 @@ public class Master extends AbstractLoggingActor {
 
     protected void handle(CrackHintResultMessage message) {
         this.log().info("received hint crack result for {}", message.id);
-        availableWorkers.add(this.sender());
-        doNextTask();
 
         List<Character> l = solvedHints.getOrDefault(message.id, new ArrayList<>());
         l.add(message.missingCharacter);
         solvedHints.put(message.id, l);
 
         if (solvedHints.size() == lines.get(message.id).length - 5) {
+            availableWorkers.add(this.sender());
+            doNextTask();
             pendingTasks.add(worker -> {
                 List<Character> alphabetList = new ArrayList<>(Arrays.asList(ArrayUtils.toObject(lines.get(message.id)[2].toCharArray())));
                 alphabetList.removeAll(solvedHints.get(message.id));
