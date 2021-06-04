@@ -57,27 +57,22 @@ public class Worker extends AbstractLoggingActor {
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class CrackBatchMessage implements Serializable {
-        private static final long serialVersionUID = 549260026772617619L;
-        private String[] line;
-    }
-
-    @Data
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class CrackHintMessage implements Serializable {
+    public static class CrackHintsMessage implements Serializable {
         private static final long serialVersionUID = 8797218033667079391L;
-        private ActorRef worker;
-        private String hashedHint;
+        private String id;
+        private String[] hashedHints;
         private char[] alphabet;
     }
 
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class CrackHintResultMessage implements Serializable {
-        private static final long serialVersionUID = 7033566951826394411L;
-        private char missingCharacter;
+    public static class CrackPasswordMessage implements Serializable {
+        private static final long serialVersionUID = 8797218033667079391L;
+        private String id;
+        private String hashedPassword;
+        private char[] alphabet;
+        private int passwordLength;
     }
 
     /////////////////
@@ -120,9 +115,8 @@ public class Worker extends AbstractLoggingActor {
                 .match(MemberUp.class, this::handle)
                 .match(MemberRemoved.class, this::handle)
                 .match(WelcomeMessage.class, this::handle)
-                .match(CrackBatchMessage.class, this::handle)
-                .match(CrackHintMessage.class, this::handle)
-                .match(CrackHintResultMessage.class, this::handle)
+                .match(CrackHintsMessage.class, this::handle)
+                .match(CrackPasswordMessage.class, this::handle)
                 .matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
                 .build();
     }
@@ -160,56 +154,34 @@ public class Worker extends AbstractLoggingActor {
         this.log().info("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
     }
 
-    private void handle(CrackBatchMessage message) {
-        currentCrackedHints = new ArrayList<>();
-        currentLine = message.line;
-        master = this.sender();
-
-        char[] alphabet = message.line[2].toCharArray();
-        String[] hintHashes = new String[message.line.length - 5];
-        System.arraycopy(message.line, 5, hintHashes, 0, hintHashes.length);
-
-        for (String hint : hintHashes) {
-            this.sender().tell(new CrackHintMessage(this.self(), hint, alphabet), this.self());
-        }
+    private void handle(CrackPasswordMessage message) {
+        heapPermutation(message.alphabet, message.passwordLength, permutation -> {
+            if(hash(permutation).equals(message.hashedPassword)){
+                this.sender().tell(new Master.CrackPasswordResultMessage(message.id,permutation), this.self());
+                return true;
+            }
+            return false;
+        });
     }
 
-    private void handle(CrackHintResultMessage message) {
-        currentCrackedHints.add(message.missingCharacter);
-
-        System.out.println("RESULT HINT: " + currentLine[1]);
-
-        if (currentCrackedHints.size() == currentLine.length - 5) { // all hints solved
-            String id = currentLine[0];
-            String name = currentLine[1];
-            char[] alphabet = currentLine[2].toCharArray();
-            int length = Integer.parseInt(currentLine[3]);
-            String passwordHash = currentLine[4];
-            String[] hintHashes = new String[currentLine.length - 5];
-            System.arraycopy(currentLine, 5, hintHashes, 0, hintHashes.length);
-
-            List<Character> alphabetList = new ArrayList<>(Arrays.asList(ArrayUtils.toObject(alphabet)));
-            alphabetList.removeAll(currentCrackedHints);
-
-            char[] remainingAlphabetChars = ArrayUtils.toPrimitive(alphabetList.toArray(new Character[0]));
-
-            char[] result = heapPermutation(remainingAlphabetChars, length, passwordHash);
-            System.out.println("CRACKED: " + name + " " + new String(result));
-            master.tell(new Master.ResultsMessage(currentLine, new String(result)), this.self());
-        }
-    }
-
-    private void handle(CrackHintMessage message) {
+    private void handle(CrackHintsMessage message) {
+        List<String> remainingHashes = new ArrayList<>(Arrays.asList(message.hashedHints));
         for (int i = 0; i < message.alphabet.length; i++) {
             char missingCharacter = message.alphabet[i];
             char[] alphabetWithoutOne = new char[message.alphabet.length - 1];
             System.arraycopy(message.alphabet, 0, alphabetWithoutOne, 0, i);
             System.arraycopy(message.alphabet, i + 1, alphabetWithoutOne, i, alphabetWithoutOne.length - i);
 
-            char[] result = heapPermutation(alphabetWithoutOne, alphabetWithoutOne.length, message.hashedHint);
-            if(result.length > 0) {
-                message.worker.tell(new CrackHintResultMessage(missingCharacter), this.self());
-            }
+            if (heapPermutation(alphabetWithoutOne, alphabetWithoutOne.length, permutation -> {
+                for(String hash: remainingHashes) {
+                    if (hash(permutation).equals(hash)) {
+                        remainingHashes.remove(hash);
+                        this.sender().tell(new Master.CrackHintResultMessage(message.id, missingCharacter), this.self());
+                        return true;
+                    }
+                }
+                return false;
+            })) return;
         }
     }
 
@@ -235,14 +207,13 @@ public class Worker extends AbstractLoggingActor {
     // Generating all permutations of an array using Heap's Algorithm
     // https://en.wikipedia.org/wiki/Heap's_algorithm
     // https://www.geeksforgeeks.org/heaps-algorithm-for-generating-permutations/
-    private char[] heapPermutation(char[] a, int size, String hash) {
+    private boolean heapPermutation(char[] a, int size, PermutationCallback l) {
         // If size is 1, store the obtained permutation
         if (size == 1)
-            if (hash(new String(a)).equals(hash)) return a;
+            if (l.check(new String(a))) return true;
 
         for (int i = 0; i < size; i++) {
-            char[] result = heapPermutation(a, size - 1, hash);
-            if (result.length > 0) return result;
+            if (heapPermutation(a, size - 1, l)) return true;
 
             // If size is odd, swap first and last element
             if (size % 2 == 1) {
@@ -259,6 +230,6 @@ public class Worker extends AbstractLoggingActor {
             }
         }
 
-        return new char[0];
+        return false;
     }
 }
