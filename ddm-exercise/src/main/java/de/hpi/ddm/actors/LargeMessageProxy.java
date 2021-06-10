@@ -19,7 +19,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 
     public static final String DEFAULT_NAME = "largeMessageProxy";
 
-    public static final int MESSAGE_BUFFER_SIZE = 1024;
+    public static final int MESSAGE_BUFFER_SIZE = 262144;
 
     public static Props props() {
         return Props.create(LargeMessageProxy.class);
@@ -57,11 +57,12 @@ public class LargeMessageProxy extends AbstractLoggingActor {
         private int count;
     }
 
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class LargeMessageHeaderACKMessage implements Serializable {
-        private static final long serialVersionUID = 6308347474303322998L;
+    public static class LargeMessageRequestWork implements Serializable {
+        private static final long serialVersionUID = 7046663623518753510L;
         private int a = 0;
     }
 
@@ -82,8 +83,8 @@ public class LargeMessageProxy extends AbstractLoggingActor {
         return receiveBuilder()
                 .match(LargeMessage.class, this::handle)
                 .match(BytesMessage.class, this::handle)
-                .match(LargeMessageHeaderACKMessage.class, this::handle)
                 .match(LargeMessageHeaderSYNMessage.class, this::handle)
+                .match(LargeMessageRequestWork.class, this::handle)
                 .matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
                 .build();
     }
@@ -91,6 +92,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
     //// SENDER PROXY
 
     byte[][] sendParts;
+    int sentParts;
     ActorRef sender;
     ActorRef receiver;
 
@@ -102,15 +104,16 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 
         byte[] serialized = KryoPoolSingleton.get().toBytesWithClass(message);
         sendParts = chunkArray(serialized, MESSAGE_BUFFER_SIZE);
+        sentParts = 0;
 
         receiverProxy.tell(new LargeMessageHeaderSYNMessage(sendParts.length), this.self());
     }
 
-    private void handle(LargeMessageHeaderACKMessage message) {
-        ActorRef receiverProxy = this.sender();
 
-        for (int i = 0; i < sendParts.length; i++) {
-            receiverProxy.tell(new BytesMessage(sendParts[i], i, sender, receiver), this.self());
+    private void handle(LargeMessageRequestWork message) {
+        if(sentParts < sendParts.length) {
+            this.sender().tell(new BytesMessage(sendParts[sentParts], sentParts, sender, receiver), this.self());
+            sentParts++;
         }
     }
 
@@ -126,18 +129,20 @@ public class LargeMessageProxy extends AbstractLoggingActor {
     private void handle(BytesMessage message) {
         receiveParts[message.number] = message.bytes;
         received++;
+
         if (received == receiveCount) {
             Object deserialized = KryoPoolSingleton.get().fromBytes(flattenArray(receiveParts));
-            message.receiver.tell(deserialized, message.sender);
+            message.getReceiver().tell(deserialized, message.getSender());
+        } else {
+            this.getSender().tell(new LargeMessageRequestWork(), this.self());
         }
     }
 
     private void handle(LargeMessageHeaderSYNMessage message) {
-        ActorRef senderProxy = this.sender();
         receiveCount = message.count;
         receiveParts = new byte[receiveCount][];
 
-        senderProxy.tell(new LargeMessageHeaderACKMessage(), this.self());
+        this.sender().tell(new LargeMessageRequestWork(), this.self());
     }
 
     ////
