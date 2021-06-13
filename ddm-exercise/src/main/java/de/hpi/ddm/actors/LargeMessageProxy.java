@@ -2,7 +2,10 @@ package de.hpi.ddm.actors;
 
 import java.io.Serializable;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 
+import akka.remote.artery.SystemMessageDelivery;
 import com.twitter.chill.KryoPool;
 
 import akka.actor.AbstractLoggingActor;
@@ -29,6 +32,24 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	////////////////////
 	// Actor Messages //
 	////////////////////
+
+	@Data
+	@AllArgsConstructor
+	@NoArgsConstructor
+	public static class PrepareLargeMessage implements Serializable {
+		private static final long serialVersionUID = 18898612711109598L;
+		private ActorRef receiver;
+		private ActorRef sender;
+		private int messageId;
+	}
+
+	@Data
+	@AllArgsConstructor
+	@NoArgsConstructor
+	public static class AcknowledgePrepareLargeMessage implements Serializable {
+		private static final long serialVersionUID = 18898612711109598L;
+		private int messageId;
+	}
 	
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class LargeMessage<T> implements Serializable {
@@ -38,19 +59,41 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	}
 
 	@Data @NoArgsConstructor @AllArgsConstructor
-	public static class BytesMessage<T> implements Serializable {
+	public static class BytesMessage implements Serializable {
 		private static final long serialVersionUID = 4057807743872319842L;
-		private T bytes;
-		private ActorRef sender;
+		private byte[] bytes;
+		private int partId;
+		private int messageId;
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class AcknowledgeBytesMessage implements Serializable {
+		private static final long serialVersionUID = 4052807743789419842L;
+		private int partId;
+		private int messageId;
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class LargeMessageFinishedMessage implements Serializable {
+		private static final long serialVersionUID = 4052807743789418888L;
+		private int messageId;
+	}
+
+	@Data
+	@AllArgsConstructor
+	@NoArgsConstructor
+	public static class LargeMessageBuffer {
 		private ActorRef receiver;
+		private ActorRef sender;
+		private byte[] messageBuffer;
 	}
 	
 	/////////////////
 	// Actor State //
 	/////////////////
-	private byte[] received = new byte[0];
-	private ActorRef receiver = null;
-	private ActorRef sender = null;
+	private Map<Integer, byte[][]> outgoingMessagesMap = new HashMap();
+	private Map<Integer, LargeMessageBuffer> incomingMessagesMap = new HashMap();
+	private int maxOutgoingMessageId = 0;
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -64,21 +107,27 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	public Receive createReceive() {
 		return receiveBuilder()
 				.match(LargeMessage.class, this::handleLargeMessage)
-				.match(ActorRef[].class, this::handleCommPartners)
-				.match(byte[].class, this::handlePart)
-				.match(Boolean.class, this::handleDone)
+				.match(PrepareLargeMessage.class, this::handlePrepareLargeMessage)
+				.match(AcknowledgePrepareLargeMessage.class, this::handleAcknowledgePrepareLargeMessage)
+				.match(BytesMessage.class, this::handleBytesMessage)
+				.match(AcknowledgeBytesMessage.class, this::handleAcknowledgeBytesMessage)
+				.match(LargeMessageFinishedMessage.class, this::handleLargeMessageFinishedMessage)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
+
 	private byte[][] divideArray(byte[] source, int chunksize) {
 
         byte[][] ret = new byte[(int)Math.ceil(source.length / (double)chunksize)][chunksize];
 
-
-        for(int i = 0; i < ret.length; i++) {
-			int end = i == ret.length ? source.length : (i+1) * chunksize;
-            ret[i] = Arrays.copyOfRange(source, i * chunksize, end);
+	    int part = 0;
+        for(; part < ret.length - 1; part++) {
+			int end = (part + 1) * chunksize;
+            ret[part] = Arrays.copyOfRange(source, part * chunksize, end);
         }
+        // The last part should only contain as many bytes as needed.
+        int end = source.length;
+        ret[part] = Arrays.copyOfRange(source, part * chunksize, end);
 
         return ret;
     }
@@ -89,37 +138,60 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		ActorRef receiver = largeMessage.getReceiver();
 		ActorSelection receiverProxy = this.context().actorSelection(receiver.path().child(DEFAULT_NAME));
 
-		receiverProxy.tell(new ActorRef[]{sender, receiver}, this.self());
 
 		KryoPool kryo = KryoPoolSingleton.get();
 		byte[] all = kryo.toBytesWithClass(message);
-		byte[][] parts = this.divideArray(all, 1024);
+		// Default max byte size per message is 262144 according to mail. Could not find anything about this on the internet.
+		byte[][] parts = this.divideArray(all, 262144);
+		outgoingMessagesMap.put(maxOutgoingMessageId, parts);
+		receiverProxy.tell(new PrepareLargeMessage(receiver, sender, maxOutgoingMessageId), this.self());
+		maxOutgoingMessageId++;
+	}
 
-		for (byte[] part : parts) {
-			receiverProxy.tell(part, this.self());
+	private void handlePrepareLargeMessage(PrepareLargeMessage message){
+		this.incomingMessagesMap.put(message.messageId, new LargeMessageBuffer(message.receiver, message.sender, new byte[0]));
+		this.getSender().tell(new AcknowledgePrepareLargeMessage(message.messageId), this.self());
+	}
+
+	private void handleAcknowledgePrepareLargeMessage(AcknowledgePrepareLargeMessage message){
+		int messageId = message.messageId;
+		// send first bytes
+		this.sendNextFewBytes(messageId, 0);
+	}
+
+	private void handleAcknowledgeBytesMessage(AcknowledgeBytesMessage message){
+		int messageId = message.messageId;
+		int partId = message.partId;
+		// send next few bytes
+		this.sendNextFewBytes(messageId, partId + 1);
+	}
+
+	private void handleBytesMessage(BytesMessage message){
+		LargeMessageBuffer buffer = incomingMessagesMap.get(message.messageId);
+		byte[] part = message.bytes;
+		byte[] old = buffer.messageBuffer;
+		buffer.messageBuffer = new byte[old.length + part.length];
+		System.arraycopy(old, 0, buffer.messageBuffer, 0, old.length);
+		System.arraycopy(part, 0, buffer.messageBuffer, old.length, part.length);
+		this.getSender().tell(new AcknowledgeBytesMessage(message.partId, message.messageId), this.self());
+	}
+
+	private void sendNextFewBytes(int messageId, int partIndex){
+		byte[][] bytes = this.outgoingMessagesMap.get(messageId);
+		// send first bytes
+		if(partIndex < bytes.length) {
+			this.getSender().tell(new BytesMessage(bytes[partIndex], partIndex, messageId), this.self());
+		} else {
+			// Send all message parts!
+			this.getSender().tell(new LargeMessageFinishedMessage(messageId), this.self());
+			this.outgoingMessagesMap.remove(messageId);
 		}
-
-		receiverProxy.tell(true, this.self());
 	}
 
-	private void handlePart(byte[] part) {
-		byte[] old = this.received;
-		this.received = new byte[old.length + part.length];
-		System.arraycopy(old, 0, this.received, 0, old.length);
-		System.arraycopy(part, 0, this.received, old.length, part.length);
-	}
-
-	private void handleCommPartners(ActorRef[] commPartners) {
-		this.sender = commPartners[0];
-		this.receiver = commPartners[1];
-	}
-
-	private void handleDone(boolean tirggerForward) {
+	private void handleLargeMessageFinishedMessage(LargeMessageFinishedMessage message){
+		LargeMessageBuffer buffer = incomingMessagesMap.get(message.messageId);
+		incomingMessagesMap.remove(buffer);
 		KryoPool kryo = KryoPoolSingleton.get();
-
-		this.receiver.tell(kryo.fromBytes(this.received), this.sender);
-		this.received = new byte[0];
-		this.receiver = null;
-		this.sender = null;
+		buffer.receiver.tell(kryo.fromBytes(buffer.messageBuffer), buffer.sender);
 	}
 }

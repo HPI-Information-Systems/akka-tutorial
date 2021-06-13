@@ -89,18 +89,14 @@ public class Worker extends AbstractLoggingActor {
 
 	@Data
 	@NoArgsConstructor
-	@AllArgsConstructor
-	public static class CrackNextNHintPermutationsMessage implements Serializable {
+	public static class CrackNextHintPermutationsMessage implements Serializable {
 		private static final long serialVersionUID = 1543040942711109598L;
-		private int hashCount;
 	}
 
 	@Data
 	@NoArgsConstructor
-	@AllArgsConstructor
-	public static class CrackNextNPasswordPermutationsMessage implements Serializable {
+	public static class CrackNextPasswordPermutationsMessage implements Serializable {
 		private static final long serialVersionUID = 1543040943451109598L;
-		private int count;
 	}
 
 	@Data
@@ -170,8 +166,8 @@ public class Worker extends AbstractLoggingActor {
 				.match(MemberRemoved.class, this::handle).match(WelcomeMessage.class, this::handle)
 				.match(InitHintCrackingConfigurationMessage.class, this::handle).match(HintHashesMessage.class, this::handle)
 				.match(InitPwdCrackingConfigurationMessage.class, this::handle)
-				.match(CrackNextNHintPermutationsMessage.class, this::handle)
-				.match(CrackNextNPasswordPermutationsMessage.class, this::handle)
+				.match(CrackNextHintPermutationsMessage.class, this::handle)
+				.match(CrackNextPasswordPermutationsMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString())).build();
 	}
 
@@ -229,9 +225,10 @@ public class Worker extends AbstractLoggingActor {
 		this.hashes.addAll(message.hashes);
 	}
 
-	private void handle(CrackNextNPasswordPermutationsMessage message) {
+	private void handle(CrackNextPasswordPermutationsMessage message) {
 		char[] currentPwd = new char[this.currentPasswordIndices.length];
-		for(int steps = 0; steps < message.count && this.currentlyTriedPasswordCombinations < this.maxPasswordCombinations; ++this.currentlyTriedPasswordCombinations, ++steps){
+		long startTime = System.currentTimeMillis();
+		for(int steps = 0; this.currentlyTriedPasswordCombinations < this.maxPasswordCombinations; ++this.currentlyTriedPasswordCombinations, ++steps){
 			for(int i = 0; i < this.currentPasswordIndices.length; ++i){
 				currentPwd[i] = this.alphabet[this.currentPasswordIndices[i]];
 			}
@@ -240,6 +237,9 @@ public class Worker extends AbstractLoggingActor {
 			if(pwdHash.equals(this.passwordHash)){
 				this.currentlyTriedPasswordCombinations = this.maxPasswordCombinations;
 				getSender().tell(new Master.PasswordSolutionMessage(pwdHash, currentPwdAsString, this.passwordIndex), getSelf());
+			} else if(System.currentTimeMillis() - startTime  > 1.5 * 1000) {
+				getSender().tell(new FinishedWorkingOnPasswordCrackingBatchMessage(this.passwordIndex), getSelf());
+				return;
 			}
 			Worker.shiftPwdPermutation(this.currentPasswordIndices, this.alphabet.length);
 		}
@@ -250,21 +250,23 @@ public class Worker extends AbstractLoggingActor {
 		}
 	}
 
-	private void handle(CrackNextNHintPermutationsMessage message) {
-		int end = Math.min(this.permutationIndex + message.hashCount, this.permutations.size());
-		List<String> permutationSubset = this.permutations.subList(this.permutationIndex, end);
-		this.permutationIndex = end;
-		for (String permutationMember : permutationSubset) {
-			String hash = Worker.hash(permutationMember);
+	private void handle(CrackNextHintPermutationsMessage message) {
+		int end = this.permutations.size();
+		long startTime = System.currentTimeMillis();
+		for(int index = this.permutationIndex; index < end; ++index){
+			String hash = Worker.hash(this.permutations.get(index));
 			if (this.hashes.contains(hash)) {
-				getSender().tell(new HintHashSolutionMessage(hash, permutationMember, this.passwordIndex), getSelf());
+				getSender().tell(new HintHashSolutionMessage(hash, this.permutations.get(index), this.passwordIndex), getSelf());
+			}
+			long estimatedTime = System.currentTimeMillis() - startTime;
+			// Finish work package after 1,5 seconds and while not at the end of a working package.
+			if(estimatedTime > 1.5 * 1000 && index < end - 1){
+				this.permutationIndex = index;
+				getSender().tell(new ReadyForMoreMessage(this.passwordIndex), getSelf());
+				return;
 			}
 		}
-		if (end == this.permutations.size()) {
-			getSender().tell(new FinishedPermutationsMessage(), getSelf());
-		} else {
-			getSender().tell(new ReadyForMoreMessage(this.passwordIndex), getSelf());
-		}
+		getSender().tell(new FinishedPermutationsMessage(), getSelf());
 	}
 
 	public static String hash(String characters) {

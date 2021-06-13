@@ -15,7 +15,7 @@ import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.testkit.javadsl.TestKit;
 import de.hpi.ddm.actors.Master.HintHashSolutionMessage;
-import de.hpi.ddm.actors.Worker.CrackNextNHintPermutationsMessage;
+import de.hpi.ddm.actors.Worker.CrackNextHintPermutationsMessage;
 import de.hpi.ddm.actors.Worker.FinishedPermutationsMessage;
 import de.hpi.ddm.actors.Worker.ReadyForMoreMessage;
 import de.hpi.ddm.actors.Worker.HintHashesMessage;
@@ -59,7 +59,7 @@ public class WorkerCrackingTest {
 				List<String> hashes = new ArrayList<String>();
 				hashes.add(Worker.hash("abc"));
 				worker.tell(new HintHashesMessage(hashes), finishCrackingPrope.getRef());
-				worker.tell(new CrackNextNHintPermutationsMessage(1), finishCrackingPrope.getRef());
+				worker.tell(new CrackNextHintPermutationsMessage(), finishCrackingPrope.getRef());
 				within(Duration.ofSeconds(4), () -> {
 					finishCrackingPrope.expectMsgClass(HintHashSolutionMessage.class);
 					finishCrackingPrope.expectMsgClass(FinishedPermutationsMessage.class);
@@ -81,10 +81,10 @@ public class WorkerCrackingTest {
 				List<String> hashes = new ArrayList<String>();
 				hashes.add(Worker.hash("def"));
 				worker.tell(new HintHashesMessage(hashes), finishCrackingPrope.getRef());
-				worker.tell(new CrackNextNHintPermutationsMessage(1), finishCrackingPrope.getRef());
+				worker.tell(new CrackNextHintPermutationsMessage(), finishCrackingPrope.getRef());
 				within(Duration.ofSeconds(4), () -> {
 					finishCrackingPrope.expectMsgClass(HintHashSolutionMessage.class);
-					finishCrackingPrope.expectMsgClass(ReadyForMoreMessage.class);
+					finishCrackingPrope.expectMsgClass(FinishedPermutationsMessage.class);
 					finishCrackingPrope.expectNoMessage();
 					return null;
 				});
@@ -104,7 +104,7 @@ public class WorkerCrackingTest {
 				List<String> hashes = new ArrayList<String>();
 				hashes.add(Worker.hash("def"));
 				worker.tell(new HintHashesMessage(hashes), finishCrackingPrope.getRef());
-				worker.tell(new CrackNextNHintPermutationsMessage(20), finishCrackingPrope.getRef());
+				worker.tell(new CrackNextHintPermutationsMessage(), finishCrackingPrope.getRef());
 				within(Duration.ofSeconds(4), () -> {
 					finishCrackingPrope.expectMsgClass(HintHashSolutionMessage.class);
 					finishCrackingPrope.expectMsgClass(FinishedPermutationsMessage.class);
@@ -130,12 +130,8 @@ public class WorkerCrackingTest {
 				hashes.add(Worker.hash("ihg"));
 				worker.tell(new HintHashesMessage(hashes), finishCrackingPrope.getRef());
 				within(Duration.ofSeconds(4), () -> {
-					worker.tell(new CrackNextNHintPermutationsMessage(2), finishCrackingPrope.getRef());
+					worker.tell(new CrackNextHintPermutationsMessage(), finishCrackingPrope.getRef());
 					finishCrackingPrope.expectMsgClass(HintHashSolutionMessage.class);
-					finishCrackingPrope.expectMsgClass(ReadyForMoreMessage.class);
-					worker.tell(new CrackNextNHintPermutationsMessage(2), finishCrackingPrope.getRef());
-					finishCrackingPrope.expectMsgClass(ReadyForMoreMessage.class);
-					worker.tell(new CrackNextNHintPermutationsMessage(2), finishCrackingPrope.getRef());
 					finishCrackingPrope.expectMsgClass(HintHashSolutionMessage.class);
 					finishCrackingPrope.expectMsgClass(FinishedPermutationsMessage.class);
 					return null;

@@ -233,14 +233,6 @@ public class Master extends AbstractLoggingActor {
         return foundReadyAndUnsolvedPassword;
     }
 
-    Worker.CrackNextNHintPermutationsMessage getHintCrackMessage() {
-        return new Worker.CrackNextNHintPermutationsMessage(BATCH_SIZE);
-    }
-
-	Worker.CrackNextNPasswordPermutationsMessage getPasswordCrackMessage() {
-		return new Worker.CrackNextNPasswordPermutationsMessage(BATCH_SIZE);
-	}
-
     void handle(FinishedReadingMessage message) {
         // Init intels
         this.readAllLines = true;
@@ -280,7 +272,7 @@ public class Master extends AbstractLoggingActor {
                 worker.tell(hintHashMessage, getSelf());
             }
             // Telling worker to start
-            worker.tell(this.getHintCrackMessage(), getSelf());
+            worker.tell(new Worker.CrackNextHintPermutationsMessage(), getSelf());
         } else {
         	this.finishedDistributingHintCrackingJobs = true;
         	this.tellWorkerNextJob(worker);
@@ -294,7 +286,7 @@ public class Master extends AbstractLoggingActor {
     		// Init the worker to crack parts of a password.
     		worker.tell(initMessage, getSelf());
     		// Tell the worker to start.
-			worker.tell(this.getPasswordCrackMessage(), getSelf());
+			worker.tell(new Worker.CrackNextPasswordPermutationsMessage(), getSelf());
 		} else {
     	    // As all hints are cracked and there currently no password cracking task available, but that worker to idle.
             this.idleWorkers.add(worker);
@@ -366,7 +358,7 @@ public class Master extends AbstractLoggingActor {
         if (currentPwd.getUncrackedHashCounter() == 0) {
             this.tellWorkerNextJob(getSender());
         } else {
-            getSender().tell(this.getHintCrackMessage(), getSelf());
+            getSender().tell(new Worker.CrackNextHintPermutationsMessage(), getSelf());
         }
     }
 
@@ -379,7 +371,7 @@ public class Master extends AbstractLoggingActor {
 
         } else {
             // Let the worker continue with cracking the password batch.
-            getSender().tell(this.getPasswordCrackMessage(), getSelf());
+            getSender().tell(new Worker.CrackNextPasswordPermutationsMessage(), getSelf());
         }
     }
 
@@ -407,7 +399,7 @@ public class Master extends AbstractLoggingActor {
     protected void handle(RegistrationMessage message) {
         this.context().watch(this.sender());
         this.workers.add(this.sender());
-        // this.log().info("Registered {}", this.sender());
+        this.log().info("Registered {}", this.sender());
 
         this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new Worker.WelcomeMessage(this.welcomeData), this.sender()), this.self());
         if(this.readAllLines){
@@ -419,6 +411,6 @@ public class Master extends AbstractLoggingActor {
     protected void handle(Terminated message) {
         this.context().unwatch(message.getActor());
         this.workers.remove(message.getActor());
-        // this.log().info("Unregistered {}", message.getActor());
+        this.log().info("Unregistered {}", message.getActor());
     }
 }
