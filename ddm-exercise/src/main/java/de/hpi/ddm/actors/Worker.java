@@ -15,7 +15,6 @@ import de.hpi.ddm.systems.MasterSystem;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.apache.commons.lang3.ArrayUtils;
 
 import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
@@ -62,7 +61,8 @@ public class Worker extends AbstractLoggingActor {
         private static final long serialVersionUID = 8797218033667079391L;
         private String id;
         private String[] hashedHints;
-        private Map<Character, List<String>> permutationsMap;
+        private int count;
+        private Map<Character, List<char[]>> permutationsMap;
     }
 
     @Data
@@ -84,10 +84,6 @@ public class Worker extends AbstractLoggingActor {
     private final Cluster cluster;
     private final ActorRef largeMessageProxy;
     private long registrationTime;
-
-    private List<Character> currentCrackedHints;
-    private String[] currentLine;
-    private ActorRef master;
 
     /////////////////////
     // Actor Lifecycle //
@@ -155,40 +151,71 @@ public class Worker extends AbstractLoggingActor {
         this.log().info("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
     }
 
-    private void handle(CrackPasswordMessage message) {
-        heapPermutation(message.alphabet, message.passwordLength, permutation -> {
-            if(hash(permutation).equals(message.hashedPassword)){
-                this.sender().tell(new Master.CrackPasswordResultMessage(message.id,permutation), this.self());
-                return true;
-            }
-            return false;
-        });
-    }
-
-    private void handle(CrackHintsMessage message) {
-        List<String> remainingHashes = new ArrayList<>(Arrays.asList(message.hashedHints));
-
-        for (Character missingCharacter : message.permutationsMap.keySet()) {
-            boolean foundHintWithoutCharacter = false;
-            for(String permutation : message.permutationsMap.get(missingCharacter)) {
-                if(!foundHintWithoutCharacter) {
-                    for (int i = 0; i < remainingHashes.size(); i++) {
-                        if (hash(permutation).equals(remainingHashes.get(i))) {
-                            System.out.println(permutation);
-                            this.sender().tell(new Master.CrackHintResultMessage(message.id, missingCharacter), this.self());
-                            remainingHashes.remove(i);
-                            foundHintWithoutCharacter = true;
-                            break;
-                        }
-                    }
-                }
+    // adjusted from https://stackoverflow.com/a/29910788
+    private static void combinations(int n, char[] arr, List<char[]> list) {
+        // Calculate the number of arrays we should create
+        int numArrays = (int)Math.pow(arr.length, n);
+        // Create each array
+        for(int i = 0; i < numArrays; i++) {
+            list.add(new char[n]);
+        }
+        // Fill up the arrays
+        for(int j = 0; j < n; j++) {
+            // This is the period with which this position changes, i.e.
+            // a period of 5 means the value changes every 5th array
+            int period = (int) Math.pow(arr.length, n - j - 1);
+            for(int i = 0; i < numArrays; i++) {
+                char[] current = list.get(i);
+                // Get the correct item and set it
+                int index = i / period % arr.length;
+                current[j] = arr[index];
             }
         }
     }
 
-    private String hash(String characters) {
+    private void handle(CrackPasswordMessage message) {
+        List<char[]> combinations = new ArrayList<>();
+        combinations(message.passwordLength, message.alphabet, combinations);
+        for(char[] combination: combinations) {
+            if (hash(combination).equals(message.hashedPassword)) {
+                this.sender().tell(new Master.CrackPasswordResultMessage(message.id, combination), this.self());
+                break;
+            }
+        }
+    }
+
+    private void handle(CrackHintsMessage message) {
+        List<String> remainingHashes = new ArrayList<>(Arrays.asList(message.hashedHints));
+        List<Character> missingCharacters = new ArrayList<>();
+
+        allCracking:
+        for (Character missingCharacter : message.permutationsMap.keySet()) {
+            currentCharacterCracking:
+            for (char[] permutation : message.permutationsMap.get(missingCharacter)) {
+                String hash = hash(permutation);
+                for (int i = 0; i < remainingHashes.size(); i++) {
+                    if (hash.equals(remainingHashes.get(i))) {
+                        missingCharacters.add(missingCharacter);
+                        remainingHashes.remove(i);
+                        System.out.println("cracked hint for " + message.id + ", " + (message.count - missingCharacters.size()) + " remaining");
+                        if(missingCharacters.size() == message.count){
+                            break allCracking;
+                        }
+                        break currentCharacterCracking;
+                    }
+                }
+            }
+        }
+        this.sender().tell(new Master.CrackHintsResultMessage(message.id, missingCharacters), this.self());
+    }
+
+    MessageDigest digest;
+
+    private String hash(char[] characters) {
         try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            if (digest == null) {
+                digest = MessageDigest.getInstance("SHA-256");
+            }
             byte[] hashedBytes = digest.digest(String.valueOf(characters).getBytes("UTF-8"));
 
             StringBuffer stringBuffer = new StringBuffer();
@@ -199,38 +226,5 @@ public class Worker extends AbstractLoggingActor {
         } catch (NoSuchAlgorithmException | UnsupportedEncodingException e) {
             throw new RuntimeException(e.getMessage());
         }
-    }
-
-    interface PermutationCallback {
-        boolean check(String s);
-    }
-
-    // Generating all permutations of an array using Heap's Algorithm
-    // https://en.wikipedia.org/wiki/Heap's_algorithm
-    // https://www.geeksforgeeks.org/heaps-algorithm-for-generating-permutations/
-    private boolean heapPermutation(char[] a, int size, PermutationCallback l) {
-        // If size is 1, store the obtained permutation
-        if (size == 1)
-            if (l.check(new String(a))) return true;
-
-        for (int i = 0; i < size; i++) {
-            if (heapPermutation(a, size - 1, l)) return true;
-
-            // If size is odd, swap first and last element
-            if (size % 2 == 1) {
-                char temp = a[0];
-                a[0] = a[size - 1];
-                a[size - 1] = temp;
-            }
-
-            // If size is even, swap i-th and last element
-            else {
-                char temp = a[i];
-                a[i] = a[size - 1];
-                a[size - 1] = temp;
-            }
-        }
-
-        return false;
     }
 }

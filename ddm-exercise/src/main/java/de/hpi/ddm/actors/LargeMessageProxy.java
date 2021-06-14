@@ -10,6 +10,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
+import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class LargeMessageProxy extends AbstractLoggingActor {
 
@@ -30,12 +32,17 @@ public class LargeMessageProxy extends AbstractLoggingActor {
     ////////////////////
 
     @Data
-    @NoArgsConstructor
-    @AllArgsConstructor
     public static class LargeMessage<T> implements Serializable {
         private static final long serialVersionUID = 2940665245810221108L;
+        private long id;
         private T message;
         private ActorRef receiver;
+
+        public LargeMessage(T message, ActorRef receiver) {
+            this.message = message;
+            this.receiver = receiver;
+            this.id = new Random().nextLong();
+        }
     }
 
     @Data
@@ -43,10 +50,9 @@ public class LargeMessageProxy extends AbstractLoggingActor {
     @AllArgsConstructor
     public static class BytesMessage implements Serializable {
         private static final long serialVersionUID = 4057807743872319842L;
+        private long id;
         private byte[] bytes;
         private int number;
-        private ActorRef sender;
-        private ActorRef receiver;
     }
 
     @Data
@@ -54,7 +60,10 @@ public class LargeMessageProxy extends AbstractLoggingActor {
     @AllArgsConstructor
     public static class LargeMessageHeaderSYNMessage implements Serializable {
         private static final long serialVersionUID = 1083889189975707009L;
+        private long id;
         private int count;
+        private ActorRef sender;
+        private ActorRef receiver;
     }
 
 
@@ -63,7 +72,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
     @AllArgsConstructor
     public static class LargeMessageRequestWork implements Serializable {
         private static final long serialVersionUID = 7046663623518753510L;
-        private int a = 0;
+        private long id;
     }
 
     /////////////////
@@ -91,29 +100,33 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 
     //// SENDER PROXY
 
-    byte[][] sendParts;
-    int sentParts;
-    ActorRef sender;
-    ActorRef receiver;
+    ConcurrentHashMap<Long, byte[][]> sendParts = new ConcurrentHashMap<>();
+    ConcurrentHashMap<Long, Integer> sentParts = new ConcurrentHashMap<>();
+    ConcurrentHashMap<Long, ActorRef> sender = new ConcurrentHashMap<>();
+    ConcurrentHashMap<Long, ActorRef> receiver = new ConcurrentHashMap<>();
 
     private void handle(LargeMessage<?> largeMessage) {
         Object message = largeMessage.getMessage();
-        sender = this.sender();
-        receiver = largeMessage.getReceiver();
-        ActorSelection receiverProxy = this.context().actorSelection(receiver.path().child(DEFAULT_NAME));
+        ActorRef snd = this.sender();
+        ActorRef rcv = largeMessage.getReceiver();
+        sender.put(largeMessage.id, snd);
+        receiver.put(largeMessage.id, rcv);
+        ActorSelection receiverProxy = this.context().actorSelection(rcv.path().child(DEFAULT_NAME));
 
-        byte[] serialized = KryoPoolSingleton.get().toBytesWithClass(message);
-        sendParts = chunkArray(serialized, MESSAGE_BUFFER_SIZE);
-        sentParts = 0;
+        byte[] serialized = KryoPoolSingleton.get().toBytesWithoutClass(message);
+        byte[][] parts = chunkArray(serialized, MESSAGE_BUFFER_SIZE);
+        sendParts.put(largeMessage.id, parts);
+        sentParts.put(largeMessage.id, 0);
 
-        receiverProxy.tell(new LargeMessageHeaderSYNMessage(sendParts.length), this.self());
+        receiverProxy.tell(new LargeMessageHeaderSYNMessage(largeMessage.id, parts.length, snd, rcv), this.self());
     }
 
 
     private void handle(LargeMessageRequestWork message) {
-        if(sentParts < sendParts.length) {
-            this.sender().tell(new BytesMessage(sendParts[sentParts], sentParts, sender, receiver), this.self());
-            sentParts++;
+        int sent = sentParts.get(message.id);
+        if (sent < sendParts.get(message.id).length) {
+            this.sender().tell(new BytesMessage(message.id, sendParts.get(message.id)[sent], sent), this.self());
+            sentParts.put(message.id, sent + 1);
         }
     }
 
@@ -122,27 +135,32 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 
     //// RECEIVER PROXY
 
-    int receiveCount;
-    byte[][] receiveParts;
-    int received = 0;
+    ConcurrentHashMap<Long, Integer> receiveCount = new ConcurrentHashMap<>();
+    ConcurrentHashMap<Long, byte[][]> receiveParts = new ConcurrentHashMap<>();
+    ConcurrentHashMap<Long, Integer> received = new ConcurrentHashMap<>();
 
-    private void handle(BytesMessage message) {
-        receiveParts[message.number] = message.bytes;
-        received++;
-
-        if (received == receiveCount) {
-            Object deserialized = KryoPoolSingleton.get().fromBytes(flattenArray(receiveParts));
-            message.getReceiver().tell(deserialized, message.getSender());
-        } else {
-            this.getSender().tell(new LargeMessageRequestWork(), this.self());
-        }
-    }
 
     private void handle(LargeMessageHeaderSYNMessage message) {
-        receiveCount = message.count;
-        receiveParts = new byte[receiveCount][];
+        receiveCount.put(message.id, message.count);
+        receiveParts.put(message.id, new byte[message.count][]);
+        sender.put(message.id, message.sender);
+        receiver.put(message.id, message.receiver);
+        received.put(message.id, 0);
 
-        this.sender().tell(new LargeMessageRequestWork(), this.self());
+        this.sender().tell(new LargeMessageRequestWork(message.id), this.self());
+    }
+
+    private void handle(BytesMessage message) {
+        int rec = received.get(message.id) + 1;
+        receiveParts.get(message.id)[message.number] = message.bytes;
+        received.put(message.id, rec);
+
+        if (rec == receiveCount.get(message.id)) {
+            Object deserialized = KryoPoolSingleton.get().fromBytes(flattenArray(receiveParts.get(message.id)));
+            receiver.get(message.id).tell(deserialized, sender.get(message.id));
+        } else {
+            this.getSender().tell(new LargeMessageRequestWork(message.id), this.self());
+        }
     }
 
     ////
