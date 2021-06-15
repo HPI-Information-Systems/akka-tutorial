@@ -1,0 +1,1 @@
+Somehow our solution is very resource hungry. One master and 8 workers need around 8GB of RAM, so start the with -Xmx12288m argument to reserve enough heap space.
