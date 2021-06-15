@@ -113,7 +113,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
         receiver.put(largeMessage.id, rcv);
         ActorSelection receiverProxy = this.context().actorSelection(rcv.path().child(DEFAULT_NAME));
 
-        byte[] serialized = KryoPoolSingleton.get().toBytesWithoutClass(message);
+        byte[] serialized = KryoPoolSingleton.get().toBytesWithClass(message);
         byte[][] parts = chunkArray(serialized, MESSAGE_BUFFER_SIZE);
         sendParts.put(largeMessage.id, parts);
         sentParts.put(largeMessage.id, 0);
@@ -124,9 +124,14 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 
     private void handle(LargeMessageRequestWork message) {
         int sent = sentParts.get(message.id);
-        if (sent < sendParts.get(message.id).length) {
-            this.sender().tell(new BytesMessage(message.id, sendParts.get(message.id)[sent], sent), this.self());
-            sentParts.put(message.id, sent + 1);
+        this.sender().tell(new BytesMessage(message.id, sendParts.get(message.id)[sent], sent), this.self());
+        sentParts.put(message.id, sent + 1);
+
+        if(sent + 1 == sendParts.get(message.id).length){
+            sendParts.remove(message.id);
+            sentParts.remove(message.id);
+            sender.remove(message.id);
+            receiver.remove(message.id);
         }
     }
 
@@ -158,6 +163,12 @@ public class LargeMessageProxy extends AbstractLoggingActor {
         if (rec == receiveCount.get(message.id)) {
             Object deserialized = KryoPoolSingleton.get().fromBytes(flattenArray(receiveParts.get(message.id)));
             receiver.get(message.id).tell(deserialized, sender.get(message.id));
+
+            receiveCount.remove(message.id);
+            receiveParts.remove(message.id);
+            received.remove(message.id);
+            sender.remove(message.id);
+            receiver.remove(message.id);
         } else {
             this.getSender().tell(new LargeMessageRequestWork(message.id), this.self());
         }
